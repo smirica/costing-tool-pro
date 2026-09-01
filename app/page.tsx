@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { DragEvent, useRef, useState } from "react";
+import { DragEvent, FormEvent, useEffect, useRef, useState } from "react";
 
 const windings = [
   { name: "PRIMARY 1", breakout: "1-2", turns: 46, material: "COPPER", size: "1 - 0.102 × 0.258", type: "Rectangle", each: 6.02351 },
@@ -19,11 +19,86 @@ const copper = windings.reduce((sum, row) => sum + row.each, 0) * coilCount;
 const steel = 110;
 const totalMetal = copper + steel;
 
+type Theme = "light" | "dark";
+
+function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
+  const nextTheme = theme === "light" ? "dark" : "light";
+  return (
+    <button className="theme-toggle" type="button" aria-label={`Switch to ${nextTheme} mode`} aria-pressed={theme === "dark"} onClick={onToggle}>
+      <span aria-hidden="true">{theme === "light" ? "Light" : "Dark"}</span>
+      <span className="theme-switch" aria-hidden="true"><i /></span>
+    </button>
+  );
+}
+
 export default function Home() {
   const inputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLElement>(null);
   const [fileName, setFileName] = useState("");
   const [phase, setPhase] = useState<"idle" | "analyzing" | "complete">("idle");
+  const [theme, setTheme] = useState<Theme>("light");
+  const [accessState, setAccessState] = useState<"checking" | "locked" | "granted">("checking");
+  const [accessPassword, setAccessPassword] = useState("");
+  const [accessError, setAccessError] = useState("");
+  const [unlocking, setUnlocking] = useState(false);
+
+  useEffect(() => {
+    const savedTheme = window.localStorage.getItem("winding-intelligence-theme");
+    const preferredTheme: Theme = savedTheme === "dark" ? "dark" : "light";
+    setTheme(preferredTheme);
+    document.documentElement.dataset.theme = preferredTheme;
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/access", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((result) => {
+        if (!active) return;
+        setAccessState(result.authorized ? "granted" : "locked");
+        if (!result.configured) setAccessError("Site access is being configured. Please try again shortly.");
+      })
+      .catch(() => {
+        if (!active) return;
+        setAccessState("locked");
+        setAccessError("The access check could not be completed. Please try again.");
+      });
+    return () => { active = false; };
+  }, []);
+
+  const toggleTheme = () => {
+    setTheme((current) => {
+      const next = current === "light" ? "dark" : "light";
+      document.documentElement.dataset.theme = next;
+      window.localStorage.setItem("winding-intelligence-theme", next);
+      return next;
+    });
+  };
+
+  const unlockSite = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!accessPassword || unlocking) return;
+    setUnlocking(true);
+    setAccessError("");
+    try {
+      const response = await fetch("/api/access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: accessPassword }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setAccessError(result.error || "That password did not work.");
+        return;
+      }
+      setAccessPassword("");
+      setAccessState("granted");
+    } catch {
+      setAccessError("The password could not be checked. Please try again.");
+    } finally {
+      setUnlocking(false);
+    }
+  };
 
   const selectFile = (file?: File) => {
     if (!file) return;
@@ -45,6 +120,38 @@ export default function Home() {
     selectFile(event.dataTransfer.files?.[0]);
   };
 
+  if (accessState !== "granted") {
+    return (
+      <main className="site-shell access-page">
+        <div className="ambient ambient-one" />
+        <div className="ambient ambient-two" />
+        <nav className="topbar" aria-label="Site controls">
+          <a className="brand" href="#access" aria-label="Winding Intelligence access"><span className="brand-mark">W</span><span>Winding Intelligence</span></a>
+          <ThemeToggle theme={theme} onToggle={toggleTheme} />
+        </nav>
+        <section className="access-card" id="access" aria-live="polite">
+          <span className="access-lock" aria-hidden="true">W</span>
+          <span className="eyebrow">SECURE READER WORKSPACE</span>
+          <h1>{accessState === "checking" ? "Checking access..." : "Enter the site password."}</h1>
+          {accessState === "checking" ? <p className="access-status">One moment while we check this browser.</p> : (
+            <>
+              <p>This public site does not require a ChatGPT account. Enter the shared password to open the costing reader.</p>
+              <form onSubmit={unlockSite}>
+                <label htmlFor="site-password">Password</label>
+                <div className="access-form-row">
+                  <input id="site-password" type="password" autoComplete="current-password" value={accessPassword} onChange={(event) => setAccessPassword(event.target.value)} autoFocus />
+                  <button type="submit" disabled={unlocking || !accessPassword}>{unlocking ? "Checking..." : "Unlock reader"}</button>
+                </div>
+                {accessError && <p className="access-error" role="alert">{accessError}</p>}
+              </form>
+              <small>Access stays unlocked in this browser for up to 8 hours.</small>
+            </>
+          )}
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="site-shell">
       <div className="ambient ambient-one" />
@@ -55,7 +162,10 @@ export default function Home() {
           <span className="brand-mark">W</span>
           <span>Winding Intelligence</span>
         </a>
-        <span className="environment-pill"><i /> Reader workspace</span>
+        <div className="top-actions">
+          <span className="environment-pill"><i /> Reader workspace</span>
+          <ThemeToggle theme={theme} onToggle={toggleTheme} />
+        </div>
       </nav>
 
       <section className="hero" id="top">
