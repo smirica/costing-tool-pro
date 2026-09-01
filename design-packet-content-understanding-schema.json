@@ -1,0 +1,149 @@
+{
+  "fieldSchema": {
+    "name": "DesignPacketAnalyzer",
+    "description": "Focused schema for Dongan/Pioneer transformer design packets. Extract only cover identity, cover stop points and notes, Other Parts assembly tables, and winding-sheet page numbers. Ignore the Master Sheet completely and ignore every General Notes block. Do not extract winding fields.",
+    "fields": {
+      "DocumentHeader": {
+        "type": "object",
+        "method": "extract",
+        "estimateSourceAndConfidence": true,
+        "description": "Cover Sheet identity only. Read the Cover Sheet table, never the Master Sheet, winding sheet, print-summary page, or Other Parts headers.",
+        "properties": {
+          "CatalogNumber": {
+            "type": "string",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Catalog value from the Cover Sheet table. Preserve letters, numbers, hyphens, periods, and suffixes exactly, such as 21-1732-TPFM. Do not use an Other Parts number such as 7A-17084."
+          },
+          "DateCreated": {
+            "type": "date",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Date Created from the Cover Sheet table, normalized as a date."
+          },
+          "DateRevised": {
+            "type": "date",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Date Revised from the Cover Sheet table, normalized as a date."
+          }
+        }
+      },
+      "StopPointsTable": {
+        "type": "array",
+        "method": "extract",
+        "estimateSourceAndConfidence": true,
+        "description": "Cover Sheet table labeled Stop Points for Winding Sheet. Return one object per populated winding column, left to right. Keep WindingName, BreakOuts, and StopPoints from the same vertical column. Ignore blank columns.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "WindingName": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Header cell in the Winding row for this source column, exactly as printed."
+            },
+            "BreakOuts": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Break Outs row cell in the same source column. Preserve comma lists, hyphens, and order exactly."
+            },
+            "StopPoints": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Stop Points row cell in the same source column. Preserve comma lists and order exactly."
+            }
+          }
+        }
+      },
+      "Notes": {
+        "type": "string",
+        "method": "extract",
+        "estimateSourceAndConfidence": true,
+        "description": "One field containing only the Cover Sheet notes section or sections, preserving printed order and wording. Include headings such as Notes for Quality and Testing, Notes for Packaging and Shipping, or Notes for Press Room. Never include any Other Parts General Notes, Master Sheet notes, winding notes, or parts-table instructions."
+      },
+      "EmbeddedWindingSheetPageNumbers": {
+        "type": "array",
+        "method": "generate",
+        "description": "Sorted one-based PDF page numbers that are actual winding sheets. Return only integers, such as [4]. This small routing field lets the application send only those pages to WindingSheetAnalyzer. Ignore Master Sheets and assembly pages.",
+        "items": {
+          "type": "integer",
+          "method": "generate",
+          "description": "One-based PDF page number of an embedded winding sheet."
+        }
+      },
+      "OtherPartsAssemblies": {
+        "type": "array",
+        "method": "extract",
+        "estimateSourceAndConfidence": true,
+        "description": "Extract one assembly object from each page that contains the four-column Part Number / QTY / UofM / Description table and at least one real row with PartNumber, Quantity, and UnitOfMeasure populated on the same row. Ignore General Notes. Ignore header-only, blank, dash-only, or accidental continuation pages even when they repeat an OtherPartNumber. The application deduplicates repeated OtherPartNumber values after extraction.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "OriginallyFor": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Originally For value from the qualifying assembly page header. Preserve it exactly."
+            },
+            "Title": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Title from the qualifying assembly page header, such as Core Assembly, Case Assembly, or Terminal & Panels."
+            },
+            "OtherPartNumber": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Large assembly number at the upper right of the qualifying page, commonly 7A-, 7B-, or similar. Preserve it exactly. This is the unique key for deduplication; it is not the Originally For value."
+            },
+            "TotalItems": {
+              "type": "integer",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Integer printed after Total Items immediately above this assembly parts table. Extract only the printed number. Leave blank when Total Items is not printed. The application, not Azure, compares this value with the number of returned real part rows."
+            },
+            "PartsTable": {
+              "type": "array",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Return one object for each REAL part row only, in top-to-bottom order. A real part row must have a nonblank Part Number, numeric QTY, and nonblank UofM in the same printed row. Ignore the first table subheader row whose Description is only the assembly or section title. Ignore General Notes text, description-only instruction or continuation rows, empty or dash-only rows, and section labels such as Additional Components/Items. When a real part description continues on later rows with blank Part Number/QTY/UofM, discard those later note lines; do not create another part and do not append them to Description.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "PartNumber": {
+                    "type": "string",
+                    "method": "extract",
+                    "estimateSourceAndConfidence": true,
+                    "description": "Part Number from a real part row. It must be populated on the same row as Quantity and UnitOfMeasure. Preserve letters, numbers, hyphens, periods, and leading zeros."
+                  },
+                  "Quantity": {
+                    "type": "number",
+                    "method": "extract",
+                    "estimateSourceAndConfidence": true,
+                    "description": "Numeric QTY from the same real part row as PartNumber and UnitOfMeasure. Do not take numbers from description-only notes."
+                  },
+                  "UnitOfMeasure": {
+                    "type": "string",
+                    "method": "extract",
+                    "estimateSourceAndConfidence": true,
+                    "description": "UofM from the same real part row as PartNumber and Quantity, such as EACH, PC, PCS, INCH, FT, FOOT, LBS, or SQ. INCH."
+                  },
+                  "Description": {
+                    "type": "string",
+                    "method": "extract",
+                    "estimateSourceAndConfidence": true,
+                    "description": "Description text printed on the same real part row only. Do not append text from later rows where PartNumber, QTY, and UofM are blank."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

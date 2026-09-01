@@ -85,7 +85,7 @@ export type AnalysisProgress = "submitting" | "analyzing";
 
 export class AnalysisTimedOutError extends Error {
   constructor() {
-    super("Azure has been analyzing this winding sheet for more than 10 minutes. No result was returned.");
+    super("Azure has been analyzing this document for more than 10 minutes. No result was returned.");
     this.name = "AnalysisTimedOutError";
   }
 }
@@ -217,13 +217,25 @@ function responseError(payload: RunningResponse | CompletedResponse | ErrorRespo
   return payload && "error" in payload && payload.error ? payload.error : fallback;
 }
 
-export async function analyzeWindingSheet(
+export type AnalyzerKind = "winding-sheet" | "design-packet";
+
+export type AnalyzeOptions = {
+  signal?: AbortSignal;
+  onProgress?: (progress: AnalysisProgress) => void;
+  analyzerKind?: AnalyzerKind;
+  pageRange?: string;
+};
+
+export async function analyzeWithAzure(
   file: File,
-  options: { signal?: AbortSignal; onProgress?: (progress: AnalysisProgress) => void } = {},
-) {
+  options: AnalyzeOptions = {},
+): Promise<ContentUnderstandingObservation> {
   options.onProgress?.("submitting");
+  const analyzerKind = options.analyzerKind ?? "winding-sheet";
   const form = new FormData();
   form.set("file", file, file.name);
+  form.set("analyzerKind", analyzerKind);
+  if (options.pageRange) form.set("pageRange", options.pageRange);
   const startResponse = await fetch("/api/content-understanding", {
     method: "POST",
     body: form,
@@ -232,7 +244,7 @@ export async function analyzeWindingSheet(
   });
   const startPayload = await readPayload(startResponse);
   if (!startResponse.ok) {
-    throw new Error(responseError(startPayload, "Azure winding-sheet analysis could not be started."));
+    throw new Error(responseError(startPayload, "Azure document analysis could not be started."));
   }
   if (!startPayload || !("operationId" in startPayload) || !startPayload.operationId) {
     throw new Error("Azure did not return an analysis job ID.");
@@ -245,7 +257,7 @@ export async function analyzeWindingSheet(
   while (Date.now() < deadline) {
     await delay(retryAfterMs, options.signal);
     const resultResponse = await fetch(
-      `/api/content-understanding?operationId=${encodeURIComponent(startPayload.operationId)}`,
+      `/api/content-understanding?operationId=${encodeURIComponent(startPayload.operationId)}&analyzerKind=${encodeURIComponent(analyzerKind)}`,
       { headers: { accept: "application/json" }, cache: "no-store", signal: options.signal },
     );
     const resultPayload = await readPayload(resultResponse);
@@ -254,13 +266,21 @@ export async function analyzeWindingSheet(
       continue;
     }
     if (!resultResponse.ok) {
-      throw new Error(responseError(resultPayload, "Azure winding-sheet analysis failed."));
+      throw new Error(responseError(resultPayload, "Azure document analysis failed."));
     }
     if (!resultPayload || !("status" in resultPayload) || resultPayload.status !== "succeeded") {
       throw new Error("Azure returned an incomplete analysis result.");
     }
-    return resultFromObservation(resultPayload as CompletedResponse);
+    return resultPayload as CompletedResponse;
   }
 
   throw new AnalysisTimedOutError();
+}
+
+export async function analyzeWindingSheet(
+  file: File,
+  options: Omit<AnalyzeOptions, "analyzerKind" | "pageRange"> = {},
+) {
+  const observation = await analyzeWithAzure(file, { ...options, analyzerKind: "winding-sheet" });
+  return resultFromObservation(observation);
 }

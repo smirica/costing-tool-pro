@@ -4,8 +4,11 @@ import { hasSiteAccess } from "../../access";
 export const runtime = "edge";
 
 const DEFAULT_ENDPOINT = "https://gator-content-understanding.services.ai.azure.com";
-const DEFAULT_ANALYZER_ID = "WindingSheetAnalyzer";
+const DEFAULT_WINDING_ANALYZER_ID = "WindingSheetAnalyzer";
+const DEFAULT_DESIGN_PACKET_ANALYZER_ID = "DesignPacketAnalyzer";
 const DEFAULT_API_VERSION = "2025-11-01";
+const PAGE_RANGE_PATTERN = /^\d+(?:-\d*)?(?:,\d+(?:-\d*)?)*$/;
+type AnalyzerKind = "winding-sheet" | "design-packet";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const RESULT_PATH = "/contentunderstanding/analyzerResults/";
 const JOB_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
@@ -120,19 +123,23 @@ function normalizeResult(payload: unknown, analyzerId: string, apiVersion: strin
   };
 }
 
-function azureSettings() {
+function azureSettings(analyzerKind: AnalyzerKind = "winding-sheet") {
   const endpoint = (configured("AZURE_CONTENT_UNDERSTANDING_ENDPOINT") || DEFAULT_ENDPOINT).replace(/\/+$/g, "");
-  const analyzerId = configured("AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID") || DEFAULT_ANALYZER_ID;
+  const analyzerId = analyzerKind === "design-packet"
+    ? configured("AZURE_CONTENT_UNDERSTANDING_DESIGN_PACKET_ANALYZER_ID") || DEFAULT_DESIGN_PACKET_ANALYZER_ID
+    : configured("AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID") || DEFAULT_WINDING_ANALYZER_ID;
   const apiVersion = configured("AZURE_CONTENT_UNDERSTANDING_API_VERSION") || DEFAULT_API_VERSION;
   const key = configured("CONTENT_UNDERSTANDING_KEY");
   return { endpoint, analyzerId, apiVersion, key };
 }
 
-async function startAnalysis(endpoint: string, key: string, analyzerId: string, apiVersion: string, file: File) {
+async function startAnalysis(endpoint: string, key: string, analyzerId: string, apiVersion: string, file: File, pageRange = "") {
   const expected = new URL(endpoint);
   if (expected.protocol !== "https:") throw new ContentUnderstandingError("The Azure endpoint must use HTTPS.", 503);
 
-  const url = `${endpoint}/contentunderstanding/analyzers/${encodeURIComponent(analyzerId)}:analyzeBinary?api-version=${encodeURIComponent(apiVersion)}`;
+  const query = new URLSearchParams({ "api-version": apiVersion });
+  if (pageRange) query.set("range", pageRange);
+  const url = `${endpoint}/contentunderstanding/analyzers/${encodeURIComponent(analyzerId)}:analyzeBinary?${query.toString()}`;
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -209,8 +216,14 @@ export async function GET(request: NextRequest) {
   if (!(await hasSiteAccess(request))) {
     return NextResponse.json({ error: "Enter the site password first." }, { status: 401 });
   }
-  const { endpoint, analyzerId, apiVersion, key } = azureSettings();
-  const operationId = new URL(request.url).searchParams.get("operationId")?.trim() ?? "";
+  const searchParams = new URL(request.url).searchParams;
+  const analyzerKindValue = searchParams.get("analyzerKind") || "winding-sheet";
+  if (analyzerKindValue !== "winding-sheet" && analyzerKindValue !== "design-packet") {
+    return NextResponse.json({ error: "Choose a supported document analyzer." }, { status: 400 });
+  }
+  const analyzerKind = analyzerKindValue as AnalyzerKind;
+  const { endpoint, analyzerId, apiVersion, key } = azureSettings(analyzerKind);
+  const operationId = searchParams.get("operationId")?.trim() ?? "";
 
   if (operationId) {
     if (!key) {
@@ -255,31 +268,40 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Cross-origin document analysis is not allowed." }, { status: 403 });
   }
 
-  const { endpoint, analyzerId, apiVersion, key } = azureSettings();
-  if (!key) {
-    return NextResponse.json({ error: "Add CONTENT_UNDERSTANDING_KEY to .env.local, then restart the site." }, { status: 503 });
-  }
-
   let form: FormData;
   try {
     form = await request.formData();
   } catch {
-    return NextResponse.json({ error: "The uploaded winding sheet could not be read." }, { status: 400 });
+    return NextResponse.json({ error: "The uploaded document could not be read." }, { status: 400 });
+  }
+
+  const analyzerKindValue = String(form.get("analyzerKind") || "winding-sheet");
+  if (analyzerKindValue !== "winding-sheet" && analyzerKindValue !== "design-packet") {
+    return NextResponse.json({ error: "Choose a supported document analyzer." }, { status: 400 });
+  }
+  const analyzerKind = analyzerKindValue as AnalyzerKind;
+  const pageRange = String(form.get("pageRange") || "").trim();
+  if (pageRange && !PAGE_RANGE_PATTERN.test(pageRange)) {
+    return NextResponse.json({ error: "The requested PDF page range is invalid." }, { status: 400 });
+  }
+  const { endpoint, analyzerId, apiVersion, key } = azureSettings(analyzerKind);
+  if (!key) {
+    return NextResponse.json({ error: "Add CONTENT_UNDERSTANDING_KEY to .env.local, then restart the site." }, { status: 503 });
   }
 
   const file = form.get("file");
   if (!(file instanceof File)) {
-    return NextResponse.json({ error: "Choose a winding sheet to analyze." }, { status: 400 });
+    return NextResponse.json({ error: "Choose a document to analyze." }, { status: 400 });
   }
   if (file.size <= 0 || file.size > MAX_FILE_BYTES) {
-    return NextResponse.json({ error: "Winding sheets must be between 1 byte and 20 MB." }, { status: 413 });
+    return NextResponse.json({ error: "Documents must be between 1 byte and 20 MB." }, { status: 413 });
   }
   if (!allowedFile(file)) {
-    return NextResponse.json({ error: "Only PDF, JPG, PNG, and TIFF winding sheets are supported." }, { status: 415 });
+    return NextResponse.json({ error: "Only PDF, JPG, PNG, and TIFF documents are supported." }, { status: 415 });
   }
 
   try {
-    const operationId = await startAnalysis(endpoint, key, analyzerId, apiVersion, file);
+    const operationId = await startAnalysis(endpoint, key, analyzerId, apiVersion, file, pageRange);
     return NextResponse.json(
       { status: "running", operationId, analyzerId, apiVersion, retryAfterMs: 2000 },
       { status: 202, headers: { "Cache-Control": "no-store", "Retry-After": "2" } },

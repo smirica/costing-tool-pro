@@ -84,3 +84,37 @@ test("connects uploads to Azure Content Understanding without exposing the key",
   assert.match(vite, /command === "serve"/);
   assert.doesNotMatch(page + reader, /CONTENT_UNDERSTANDING_KEY/);
 });
+
+
+test("supports focused design-packet extraction and winding-page routing", async () => {
+  const [page, packetReader, reader, route, schemaText, envExample] = await Promise.all([
+    readFile(new URL("app/page.tsx", root), "utf8"),
+    readFile(new URL("app/design-packet-reader.ts", root), "utf8"),
+    readFile(new URL("app/winding-reader.ts", root), "utf8"),
+    readFile(new URL("app/api/content-understanding/route.ts", root), "utf8"),
+    readFile(new URL("design-packet-content-understanding-schema.json", root), "utf8"),
+    readFile(new URL(".env.example", root), "utf8"),
+  ]);
+  const schema = JSON.parse(schemaText);
+  assert.equal(schema.fieldSchema.name, "DesignPacketAnalyzer");
+  assert.ok(schema.fieldSchema.fields.DocumentHeader);
+  assert.ok(schema.fieldSchema.fields.StopPointsTable);
+  assert.ok(schema.fieldSchema.fields.Notes);
+  assert.ok(schema.fieldSchema.fields.EmbeddedWindingSheetPageNumbers);
+  assert.ok(schema.fieldSchema.fields.OtherPartsAssemblies);
+  assert.match(schema.fieldSchema.description, /Ignore the Master Sheet completely/i);
+  assert.doesNotMatch(schemaText, /WindingTableColumns|WireWeightLbsPerCoil/);
+  assert.match(packetReader, /analyzerKind: "design-packet"/);
+  assert.match(packetReader, /pageRange: designPacket\.windingSheetPages\.join/);
+  assert.match(reader, /form\.set\("analyzerKind"/);
+  assert.match(reader, /analyzerKind=\$\{encodeURIComponent\(analyzerKind\)\}/);
+  assert.match(reader, /form\.set\("pageRange"/);
+  assert.match(route, /AZURE_CONTENT_UNDERSTANDING_DESIGN_PACKET_ANALYZER_ID/);
+  assert.match(route, /azureSettings\(analyzerKind\)/);
+  assert.match(route, /query\.set\("range", pageRange\)/);
+  assert.match(page, /Design packet results/);
+  assert.match(page, /DesignPacketResultPanel/);
+  assert.match(page, /document-kind-switch/);
+  assert.doesNotMatch(page + packetReader, /21-1732-TPFM|7A-17084|7B-17013/);
+  assert.match(envExample, /AZURE_CONTENT_UNDERSTANDING_DESIGN_PACKET_ANALYZER_ID=DesignPacketAnalyzer/);
+});
