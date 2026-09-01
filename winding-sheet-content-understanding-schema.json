@@ -1,0 +1,486 @@
+{
+  "fieldSchema": {
+    "name": "WindingSheetAnalyzer",
+    "description": "Table-centered schema for Dongan/Pioneer transformer winding sheets. Read every page before returning results. Treat the winding grid as a transposed table: row labels are field names and every populated vertical source column becomes one WindingTableColumns object. Append continuation columns from later pages; never overwrite page-one columns. Shield and External Duct columns must be retained but are not windings. Ignore the Winding/Finishing Notes table and all loss-testing content. Do not calculate material totals in the analyzer; downstream code must calculate them from grounded table values.",
+    "fields": {
+      "DocumentHeader": {
+        "type": "object",
+        "method": "extract",
+        "estimateSourceAndConfidence": true,
+        "description": "Document identity and title-block table. Consolidate repeated header values across all pages into one object. A value repeated on page two is the same document-level value, not an additional value.",
+        "properties": {
+          "CatalogNumber": {
+            "type": "string",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "CAT #, catalog number, model, or part identifier from the title block. Preserve leading zeros, letters, hyphens, periods, and suffixes exactly. Do not use the barcode value, revision number, or drawing number.",
+            "examples": ["21-1001L-U-1", "83-117-UST224"]
+          },
+          "DocumentTitle": {
+            "type": "string",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Printed document title, normally Dongan - Pioneer Specs / Winding Sheet or equivalent."
+          },
+          "CoilsPerTransformer": {
+            "type": "integer",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Single transformer-level value from Coils per Transformer. If repeated on multiple pages, return it once and never sum repeated page values.",
+            "examples": ["2", "3"]
+          },
+          "DesignDate": {
+            "type": "date",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Design Dt. or design date from the title block. Do not substitute the revision or release date."
+          },
+          "DesignedBy": {
+            "type": "string",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Des. By or designer name/initials from the title block."
+          },
+          "RevisionNumber": {
+            "type": "string",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Current Rev # from the title block. Preserve letters, numbers, and punctuation."
+          },
+          "RevisionDate": {
+            "type": "date",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Rev Dt. associated with the current revision."
+          },
+          "RevisedBy": {
+            "type": "string",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Rev By name or initials from the title block."
+          },
+          "CheckedBy": {
+            "type": "string",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Chk By name or initials from the title block."
+          },
+          "CurrentSheetNumber": {
+            "type": "integer",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Current sheet/page number from Sheet X of Y or Page #. This value can differ by page."
+          },
+          "PageCount": {
+            "type": "integer",
+            "method": "generate",
+            "description": "Total submitted PDF page count. Prefer the denominator in Sheet X of Y only when it agrees across pages. Read all pages."
+          }
+        }
+      },
+      "WindingTableColumns": {
+        "type": "array",
+        "method": "generate",
+        "estimateSourceAndConfidence": true,
+        "description": "Transpose the winding table into column objects. Create one object for every populated named source column on every page, preserving top-to-bottom cell relationships inside that column. Include true windings, Shield columns, and External Duct columns. Exclude empty placeholder columns whose header and cells are only blank or dashes. Page-two or later continuation columns must be appended to this same array even when the table header repeats. Names vary by file; never require PRIMARY 1 or SECONDARY 1 as exact names.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "ColumnHeader": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Exact text in the Winding header row for this source column. Preserve variable names such as PRIMARY 1, SECONDARY 1, TERTIARY, CONTROL, SHIELD, or EXTERNAL DUCT. Do not normalize or invent a name."
+            },
+            "ColumnType": {
+              "type": "string",
+              "method": "classify",
+              "estimateSourceAndConfidence": true,
+              "enum": ["Winding", "Shield", "External Duct", "Other Non-Winding"],
+              "description": "Classify the entire source column. Shield means a column explicitly labeled Shield or an equivalent electrostatic-screen column, even if it contains copper, one turn, insulation, wire weight, or a lead. External Duct means a column explicitly labeled External Duct or equivalent cooling/spacing duct column. Other Non-Winding is another explicitly populated non-winding construction column. Every other populated electrical/conductor column is Winding regardless of its variable header name."
+            },
+            "CountsAsWinding": {
+              "type": "boolean",
+              "method": "generate",
+              "description": "True only when ColumnType is Winding. Always false for Shield, External Duct, and Other Non-Winding. Shield data must be retained even though this value is false."
+            },
+            "SourcePage": {
+              "type": "integer",
+              "method": "generate",
+              "description": "One-based PDF page containing this source column. Continuation columns on page two or later keep their actual page number."
+            },
+            "SourceColumnNumber": {
+              "type": "integer",
+              "method": "generate",
+              "description": "One-based left-to-right position among populated named table columns on this page. Restart numbering on each new page."
+            },
+            "BreakOut": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Cell from the Break out row in this same column, exactly as printed."
+            },
+            "NoLoadVoltage": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Cell from the No Load V row in this same column. Preserve tap sequences, decimals, Y/DELTA/CT notation, slash notation, and dashes exactly."
+            },
+            "FullLoadVoltage": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Cell from the Full Load V row in this same column. Preserve tap and connection wording exactly."
+            },
+            "WireMaterial": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Cell from the Wire Material row in this same column. Preserve COPPER, ALUMINUM/ALUMINIUM, CU, AL, or other printed text; do not infer material for an empty cell."
+            },
+            "WireInsulationClass": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Cell from the Wire Ins. Class row in this same column, such as 220 C or a class/designation."
+            },
+            "WireNumberOrSize": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Cell from the Wire No. (Size) row in this same column. Preserve parallel count, gauge, foil thickness, decimals, X notation, and units."
+            },
+            "WireDimensions": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Cell from the Wire Dims row in this same column, exactly as printed."
+            },
+            "Bifilar": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Cell from the Bifilar row in this same column, such as 1H1W or 1H4W."
+            },
+            "CoilLengthInches": {
+              "type": "number",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Numeric cell from the Coil Length row in this same column, in inches."
+            },
+            "MarginEachEndInches": {
+              "type": "number",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Numeric cell from the Margin @ Each End row in this same column, in inches."
+            },
+            "WindingLengthInches": {
+              "type": "number",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Numeric cell from the Winding Length row in this same column, in inches."
+            },
+            "DuctStickSize": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Cell from the Duct Stick Size row in this same column. This is often the principal populated value in an External Duct column."
+            },
+            "FrontAndBackBetweenLayers": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Cell from Front & Back (Bet. Layers) in this same column, preserving layer numbers and punctuation."
+            },
+            "AllAroundBetweenLayers": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Cell from All Around (Bet. Layers) in this same column."
+            },
+            "ThreeSidedBetweenLayers": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Cell from Three Sided (Bet. Layers) in this same column."
+            },
+            "TotalTurns": {
+              "type": "number",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Numeric cell from Total Turns in this same column. A Shield column can legitimately contain 1 turn but still does not count as a winding."
+            },
+            "TapsRow1": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "First Taps row cell in this same column, exactly as printed."
+            },
+            "TapsRow2": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Second Taps row cell in this same column, exactly as printed."
+            },
+            "TurnsLayersRow1": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "First T / L row cell in this same column, preserving ordered turns/layers notation such as 1L-25, 1L-21."
+            },
+            "TurnsLayersRow2": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Second T / L row cell in this same column, exactly as printed."
+            },
+            "LayerPaper": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Layer Paper row cell in this same column, including SHIELD LAP INSULATION when printed."
+            },
+            "LayerPaperDetails1": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Layer Paper Details - 1 row cell in this same column."
+            },
+            "LayerPaperDetails2": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Layer Paper Details - 2 row cell in this same column."
+            },
+            "Wrap1": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Wrap 1 row cell in this same column."
+            },
+            "Wrap1Details": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Wrap 1 Details row cell in this same column."
+            },
+            "Wrap2": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Wrap 2 row cell in this same column."
+            },
+            "Wrap2Details": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Wrap 2 Details row cell in this same column."
+            },
+            "WireResistanceOhms": {
+              "type": "number",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Numeric cell from Wire Resistance in this same column, in ohms."
+            },
+            "WireWeightLbsPerCoil": {
+              "type": "number",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Numeric cell from Wire Weight or Wire Weight (Lbs) in this same column. This is the printed weight for one coil/column before downstream multiplication by CoilsPerTransformer. Keep Shield weight with its Shield column."
+            },
+            "Leads": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Leads row cell in this same column, preserving terminal groups, wire designation, temperature class, and length."
+            }
+          }
+        }
+      },
+      "PapersTapesTable": {
+        "type": "array",
+        "method": "generate",
+        "estimateSourceAndConfidence": true,
+        "description": "Small separate table labeled Papers (Sq In.)/Tapes (In.) or equivalent. Return one object per populated material cell across every page. Preserve row and column location so adjacent cells are not merged. Do not mix these cells with the per-column Layer Paper and Wrap rows in WindingTableColumns.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "SourcePage": {
+              "type": "integer",
+              "method": "generate",
+              "description": "One-based page containing the material cell."
+            },
+            "SourceRowNumber": {
+              "type": "integer",
+              "method": "generate",
+              "description": "One-based row position within the Papers/Tapes table."
+            },
+            "SourceColumnNumber": {
+              "type": "integer",
+              "method": "generate",
+              "description": "One-based left-to-right column position within the Papers/Tapes table."
+            },
+            "CellText": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Complete populated cell text exactly as printed, such as 0.011 CEQUIN IF (480)."
+            },
+            "MaterialName": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Material designation from the cell, preserving thickness and grade, but excluding a trailing parenthesized quantity when it is clearly a quantity."
+            },
+            "MeasurementKind": {
+              "type": "string",
+              "method": "classify",
+              "estimateSourceAndConfidence": true,
+              "enum": ["Square Inches", "Tape Inches", "Unspecified"],
+              "description": "Classify the cell quantity from the table heading and context as Square Inches, Tape Inches, or Unspecified. Do not guess when the heading does not distinguish the unit."
+            },
+            "QuantityValue": {
+              "type": "number",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Numeric quantity printed for this material, commonly the value in parentheses. Leave blank when no reliable quantity is printed."
+            },
+            "QuantityText": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "Original printed quantity expression, including parentheses or units."
+            }
+          }
+        }
+      },
+      "MaterialsLaminationsTubesTable": {
+        "type": "object",
+        "method": "extract",
+        "estimateSourceAndConfidence": true,
+        "description": "Separate right-side construction table containing HIPOT, flux density, temperature rise, tubes, tube wrap, absorption/build data, max excitation, lamination details, and crossover margins. Read this table across all pages but ignore the adjacent Winding/Finishing Notes table.",
+        "properties": {
+          "SourcePage": {
+            "type": "integer",
+            "method": "generate",
+            "description": "One-based page containing the principal materials/laminations/tubes table."
+          },
+          "Hipot": {
+            "type": "string",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "HIPOT row value exactly as printed. Do not use HIPOT instructions from the ignored Winding/Finishing Notes table."
+          },
+          "BmKg": {
+            "type": "number",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Numeric Bm (kG) value from the table header/row."
+          },
+          "TemperatureRiseC": {
+            "type": "number",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Numeric T Rise C value from the table."
+          },
+          "TubeSpecifications": {
+            "type": "array",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "All populated Tube row specifications in source order. Keep each row as one exact string, including NO TUBE when printed.",
+            "items": {
+              "type": "string",
+              "method": "extract",
+              "estimateSourceAndConfidence": true,
+              "description": "One complete Tube row value exactly as printed."
+            }
+          },
+          "TubeWrap": {
+            "type": "string",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Tube Wrap row value exactly as printed."
+          },
+          "AbsorptionVolts": {
+            "type": "number",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Volts value from the Abs. @ Volts row."
+          },
+          "AbsorptionFrequencyHz": {
+            "type": "number",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Hz value from the Abs. @ frequency row."
+          },
+          "BuildPercentLeftRight": {
+            "type": "string",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Build % (L/R) value exactly as printed, preserving left/right slash notation."
+          },
+          "MaxIexVolts": {
+            "type": "number",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Voltage value from the Max Iex row."
+          },
+          "MaxIexLeft": {
+            "type": "number",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Left Max Iex value when separate left and right values are printed."
+          },
+          "MaxIexRight": {
+            "type": "number",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Right Max Iex value when separate left and right values are printed."
+          },
+          "LaminationDetails": {
+            "type": "string",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Complete LAM Details row exactly as printed. Preserve lamination shape, thickness, grade, stack, dimensions, and printed steel weight."
+          },
+          "SteelGrade": {
+            "type": "string",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Steel grade parsed from LaminationDetails, such as M12. Leave blank if not explicitly printed."
+          },
+          "LaminationThicknessInches": {
+            "type": "number",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Lamination thickness in inches parsed from LaminationDetails."
+          },
+          "StackInches": {
+            "type": "number",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Stack dimension in inches parsed from LaminationDetails."
+          },
+          "SteelWeightLbs": {
+            "type": "number",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Steel/lamination weight in pounds parsed from LaminationDetails. This is a transformer-level value and must not be multiplied by CoilsPerTransformer."
+          },
+          "CoilfaceCrossover": {
+            "type": "string",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Coilface X'Over row value exactly as printed, including NONE."
+          },
+          "MarginCrossover": {
+            "type": "string",
+            "method": "extract",
+            "estimateSourceAndConfidence": true,
+            "description": "Margin X'Over row value exactly as printed, including NONE."
+          }
+        }
+      }
+    }
+  }
+}

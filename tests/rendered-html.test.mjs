@@ -52,3 +52,35 @@ test("defaults to light mode and provides a persistent theme switch", async () =
   assert.match(css, /html\[data-theme="light"\]/);
   assert.match(css, /html\[data-theme="dark"\]/);
 });
+
+test("connects uploads to Azure Content Understanding without exposing the key", async () => {
+  const [page, reader, route, vite, css] = await Promise.all([
+    readFile(new URL("app/page.tsx", root), "utf8"),
+    readFile(new URL("app/winding-reader.ts", root), "utf8"),
+    readFile(new URL("app/api/content-understanding/route.ts", root), "utf8"),
+    readFile(new URL("vite.config.ts", root), "utf8"),
+    readFile(new URL("app/globals.css", root), "utf8"),
+  ]);
+  assert.match(page, /analyzeWindingSheet\(selectedFile,/);
+  assert.match(reader, /fetch\("\/api\/content-understanding"/);
+  assert.match(route, /Ocp-Apim-Subscription-Key/);
+  assert.match(route, /hasSiteAccess/);
+  assert.match(route, /isSameOrigin/);
+  assert.match(route, /20 \* 1024 \* 1024/);
+  assert.match(route, /Operation-Location/i);
+  assert.match(route, /operationId/);
+  assert.match(route, /status: "running"/);
+  assert.match(reader, /MAX_ANALYSIS_MS = 10 \* 60 \* 1000/);
+  assert.match(reader, /operationId=\$\{encodeURIComponent/);
+  assert.doesNotMatch(route, /MAX_POLLS|pollAnalysis/);
+  assert.doesNotMatch(page + reader, /sampleResult|21-1001L-U-1/);
+  assert.match(page, /useState<WindingResult \| null>\(null\)/);
+  assert.match(page, /analysisControllerRef\.current\?\.abort\(\)/);
+  assert.match(page, /resultFileName/);
+  assert.match(page, /formatElapsed\(elapsedSeconds\)/);
+  assert.match(page, /analysisStartedAtRef/);
+  assert.match(page, /loading-spinner/);
+  assert.match(css, /@keyframes reader-spin/);
+  assert.match(vite, /command === "serve"/);
+  assert.doesNotMatch(page + reader, /CONTENT_UNDERSTANDING_KEY/);
+});
