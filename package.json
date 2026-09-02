@@ -9,6 +9,9 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
+    "tunnel:start": "sh .devcontainer/scripts/start-tunnel.sh",
+    "tunnel:status": "sh .devcontainer/scripts/tunnel-status.sh",
+    "tunnel:stop": "sh .devcontainer/scripts/stop-tunnel.sh",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"

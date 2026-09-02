@@ -1,0 +1,28 @@
+{
+  "name": "CostingTool Pro",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspace",
+  "forwardPorts": [3000, 4040],
+  "portsAttributes": {
+    "3000": {
+      "label": "Next.js Dev Server",
+      "onAutoForward": "notify"
+    },
+    "4040": {
+      "label": "ngrok Web UI (tunnel status)",
+      "onAutoForward": "notify"
+    }
+  },
+  "postCreateCommand": "npm install",
+  "postStartCommand": "npm run dev > /tmp/costingtool-dev.log 2>&1 &",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-azuretools.vscode-docker",
+        "tailwindlabs.tailwindcss-intellisense",
+        "dbaeumer.vscode-eslint"
+      ]
+    }
+  }
+}

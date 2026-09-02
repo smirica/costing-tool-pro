@@ -11,6 +11,7 @@ const LOCAL_ENV_KEYS = [
   "WINDING_SITE_ACCESS_PASSWORD",
   "AZURE_CONTENT_UNDERSTANDING_ENDPOINT",
   "AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID",
+  "AZURE_CONTENT_UNDERSTANDING_DESIGN_PACKET_ANALYZER_ID",
   "AZURE_CONTENT_UNDERSTANDING_API_VERSION",
   "CONTENT_UNDERSTANDING_KEY",
 ];
@@ -62,9 +63,11 @@ export default defineConfig(async ({ command, mode }) => {
     : {};
 
   return {
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    server: {
+      host: true,
+      allowedHosts: ["viewable-sympathy-recipient.ngrok-free.dev"],
+      ...(isCodexSeatbeltSandbox ? { watch: { useFsEvents: false, usePolling: true } } : {}),
+    },
     plugins: [
       vinext(),
       sites(),
