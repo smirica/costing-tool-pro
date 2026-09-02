@@ -89,7 +89,7 @@ export function WindingResultPanel({ result, fileName, elapsedSeconds }: { resul
             <div><dt>Winding length</dt><dd>{firstWinding?.windingLength == null ? "—" : `${firstWinding.windingLength} in`}</dd></div>
           </dl>
         </section>
-      </div>      <div className="review-bar"><div><span className="review-icon">✓</span><p><strong>Ready for engineering review</strong><small>{result.warnings.length ? result.warnings.join(" · ") : "Only routed winding-sheet pages were read; Shield and External Duct columns are retained but not counted as windings."}</small></p></div><button type="button" onClick={() => window.print()}>Print result</button></div>
+      </div>      <div className="review-bar"><div><span className="review-icon">✓</span><p><strong>Ready for engineering review</strong><small>{result.warnings.length ? result.warnings.join(" · ") : "Classifier-routed winding pages were extracted; Shield and External Duct columns are retained but not counted as windings."}</small></p></div><button type="button" onClick={() => window.print()}>Print result</button></div>
     </>
   );
 }
@@ -130,7 +130,7 @@ export function DesignPacketResultPanel({ result, fileName, elapsedSeconds }: { 
   return (
     <>
       <div className="preview-heading">
-        <div><span className="eyebrow">DESIGN PACKET EXTRACTION COMPLETE</span><h2>{result.header.catalogNumber}</h2><p>{fileName} · {formatElapsed(elapsedSeconds)} combined processing time</p></div>
+        <div><span className="eyebrow">DESIGN PACKET EXTRACTION COMPLETE</span><h2>{result.header.catalogNumber}</h2><p>{fileName} · {formatElapsed(elapsedSeconds)} classifier processing time</p></div>
         <span className="confidence"><i /> {confidenceLabel}</span>
       </div>
       <div className="design-metric-grid">
@@ -158,7 +158,7 @@ export function DesignPacketResultPanel({ result, fileName, elapsedSeconds }: { 
         {result.assemblies.length ? result.assemblies.map((assembly, index) => <article key={`${assembly.otherPartNumber}-index-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><p><strong>{assembly.otherPartNumber || "Number not found"}</strong><small>{assembly.title}</small></p></article>) : <p className="empty-result">No Other Parts assembly pages were returned.</p>}
       </div>
       <div className="assembly-list">{result.assemblies.map((assembly, index) => <AssemblyTable assembly={assembly} index={index} key={`${assembly.otherPartNumber}-${index}`} />)}</div>
-      <div className="review-bar"><div><span className="review-icon">✓</span><p><strong>Ready for design review</strong><small>{result.warnings.length ? result.warnings.join(" · ") : "Design-packet fields are separated from the winding-sheet pass for faster, reviewable extraction."}</small></p></div><button type="button" onClick={() => window.print()}>Print result</button></div>
+      <div className="review-bar"><div><span className="review-icon">✓</span><p><strong>Ready for design review</strong><small>{result.warnings.length ? result.warnings.join(" · ") : "Design-packet and winding fields came back through one classifier operation and remain separately reviewable."}</small></p></div><button type="button" onClick={() => window.print()}>Print result</button></div>
     </>
   );
 }

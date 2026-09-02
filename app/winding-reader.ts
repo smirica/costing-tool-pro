@@ -7,8 +7,29 @@ export type ContentUnderstandingField = {
 export type ContentUnderstandingObservation = {
   analyzerId: string;
   apiVersion: string;
+  category: string;
+  path: string;
+  startPageNumber: number | null;
+  endPageNumber: number | null;
   markdown: string;
   fields: Record<string, ContentUnderstandingField>;
+  warnings: string[];
+};
+
+export type ContentUnderstandingSegment = {
+  path: string;
+  segmentId: string;
+  category: string;
+  startPageNumber: number | null;
+  endPageNumber: number | null;
+  confidence: number | null;
+};
+
+export type ContentUnderstandingAnalysis = {
+  analyzerId: string;
+  apiVersion: string;
+  observations: ContentUnderstandingObservation[];
+  segments: ContentUnderstandingSegment[];
   warnings: string[];
 };
 
@@ -75,7 +96,7 @@ type StartResponse = {
 };
 
 type RunningResponse = StartResponse;
-type CompletedResponse = ContentUnderstandingObservation & {
+type CompletedResponse = ContentUnderstandingAnalysis & {
   status: "succeeded";
   operationId: string;
 };
@@ -217,25 +238,18 @@ function responseError(payload: RunningResponse | CompletedResponse | ErrorRespo
   return payload && "error" in payload && payload.error ? payload.error : fallback;
 }
 
-export type AnalyzerKind = "winding-sheet" | "design-packet";
-
 export type AnalyzeOptions = {
   signal?: AbortSignal;
   onProgress?: (progress: AnalysisProgress) => void;
-  analyzerKind?: AnalyzerKind;
-  pageRange?: string;
 };
 
 export async function analyzeWithAzure(
   file: File,
   options: AnalyzeOptions = {},
-): Promise<ContentUnderstandingObservation> {
+): Promise<ContentUnderstandingAnalysis> {
   options.onProgress?.("submitting");
-  const analyzerKind = options.analyzerKind ?? "winding-sheet";
   const form = new FormData();
   form.set("file", file, file.name);
-  form.set("analyzerKind", analyzerKind);
-  if (options.pageRange) form.set("pageRange", options.pageRange);
   const startResponse = await fetch("/api/content-understanding", {
     method: "POST",
     body: form,
@@ -257,7 +271,7 @@ export async function analyzeWithAzure(
   while (Date.now() < deadline) {
     await delay(retryAfterMs, options.signal);
     const resultResponse = await fetch(
-      `/api/content-understanding?operationId=${encodeURIComponent(startPayload.operationId)}&analyzerKind=${encodeURIComponent(analyzerKind)}`,
+      `/api/content-understanding?operationId=${encodeURIComponent(startPayload.operationId)}`,
       { headers: { accept: "application/json" }, cache: "no-store", signal: options.signal },
     );
     const resultPayload = await readPayload(resultResponse);
@@ -275,12 +289,4 @@ export async function analyzeWithAzure(
   }
 
   throw new AnalysisTimedOutError();
-}
-
-export async function analyzeWindingSheet(
-  file: File,
-  options: Omit<AnalyzeOptions, "analyzerKind" | "pageRange"> = {},
-) {
-  const observation = await analyzeWithAzure(file, { ...options, analyzerKind: "winding-sheet" });
-  return resultFromObservation(observation);
 }

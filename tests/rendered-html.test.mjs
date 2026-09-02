@@ -61,7 +61,7 @@ test("connects uploads to Azure Content Understanding without exposing the key",
     readFile(new URL("vite.config.ts", root), "utf8"),
     readFile(new URL("app/globals.css", root), "utf8"),
   ]);
-  assert.match(page, /analyzeWindingSheet\(selectedFile,/);
+  assert.match(page, /analyzeDocument\(selectedFile,/);
   assert.match(reader, /fetch\("\/api\/content-understanding"/);
   assert.match(route, /Ocp-Apim-Subscription-Key/);
   assert.match(route, /hasSiteAccess/);
@@ -86,7 +86,7 @@ test("connects uploads to Azure Content Understanding without exposing the key",
 });
 
 
-test("supports focused design-packet extraction and winding-page routing", async () => {
+test("uses one classifier operation and reads fields from routed segments", async () => {
   const [page, packetReader, reader, route, schemaText, envExample] = await Promise.all([
     readFile(new URL("app/page.tsx", root), "utf8"),
     readFile(new URL("app/design-packet-reader.ts", root), "utf8"),
@@ -100,21 +100,36 @@ test("supports focused design-packet extraction and winding-page routing", async
   assert.ok(schema.fieldSchema.fields.DocumentHeader);
   assert.ok(schema.fieldSchema.fields.StopPointsTable);
   assert.ok(schema.fieldSchema.fields.Notes);
-  assert.ok(schema.fieldSchema.fields.EmbeddedWindingSheetPageNumbers);
+  assert.equal(schema.fieldSchema.fields.EmbeddedWindingSheetPageNumbers, undefined);
   assert.ok(schema.fieldSchema.fields.OtherPartsAssemblies);
   assert.match(schema.fieldSchema.description, /Ignore the Master Sheet completely/i);
   assert.doesNotMatch(schemaText, /WindingTableColumns|WireWeightLbsPerCoil/);
-  assert.match(packetReader, /analyzerKind: "design-packet"/);
-  assert.match(packetReader, /pageRange: designPacket\.windingSheetPages\.join/);
-  assert.match(reader, /form\.set\("analyzerKind"/);
-  assert.match(reader, /analyzerKind=\$\{encodeURIComponent\(analyzerKind\)\}/);
-  assert.match(reader, /form\.set\("pageRange"/);
-  assert.match(route, /AZURE_CONTENT_UNDERSTANDING_DESIGN_PACKET_ANALYZER_ID/);
-  assert.match(route, /azureSettings\(analyzerKind\)/);
-  assert.match(route, /query\.set\("range", pageRange\)/);
-  assert.match(page, /Design packet results/);
+  assert.match(packetReader, /analysis\.observations\.filter\(isDesignPacketObservation\)/);
+  assert.match(packetReader, /analysis\.observations\.filter\(isWindingObservation\)/);
+  assert.match(packetReader, /pagesForCategory\(analysis, "Winding_Sheet"\)/);
+  assert.doesNotMatch(reader, /analyzerKind|pageRange/);
+  assert.match(route, /DEFAULT_ANALYZER_ID = "DesignPacketClassifier"/);
+  assert.match(route, /observations/);
+  assert.match(route, /segments/);
+  assert.match(route, /segmentsByPath\.get\(normalizedPath\(path\)\)/);
+  assert.match(route, /content\.category \|\| segment\?\.category/);
+  assert.doesNotMatch(route, /AZURE_CONTENT_UNDERSTANDING_DESIGN_PACKET_ANALYZER_ID|query\.set\("range"/);
+  assert.doesNotMatch(page, /design-results-shortcut/);
   assert.match(page, /DesignPacketResultPanel/);
-  assert.match(page, /document-kind-switch/);
+  assert.doesNotMatch(page, /document-kind-switch|WindingSheetAnalyzer|DesignPacketAnalyzer/);
+  assert.match(page, /DesignPacketClassifier/);
   assert.doesNotMatch(page + packetReader, /21-1732-TPFM|7A-17084|7B-17013/);
-  assert.match(envExample, /AZURE_CONTENT_UNDERSTANDING_DESIGN_PACKET_ANALYZER_ID=DesignPacketAnalyzer/);
+  assert.match(envExample, /AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID=DesignPacketClassifier/);
+  assert.doesNotMatch(envExample, /AZURE_CONTENT_UNDERSTANDING_DESIGN_PACKET_ANALYZER_ID/);
+});
+
+test("defines Azure Content Understanding routing for winding sheets, design packets, and other files", async () => {
+  const classifierText = await readFile(new URL("document-routing-content-understanding-classifier.json", root), "utf8");
+  const classifier = JSON.parse(classifierText);
+  assert.equal(classifier.baseAnalyzerId, "prebuilt-document");
+  assert.equal(classifier.config.enableSegment, true);
+  assert.equal(classifier.config.contentCategories.Winding_Sheet.analyzerId, "WindingSheetAnalyzer");
+  assert.equal(classifier.config.contentCategories.Design_Packet.analyzerId, "DesignPacketAnalyzer");
+  assert.ok(classifier.config.contentCategories.Other);
+  assert.equal(classifier.config.contentCategories.Other.analyzerId, undefined);
 });

@@ -7,26 +7,9 @@ services:
       - "3000:3000"
       - "4040:4040"
     volumes:
+      # This bind mount includes the existing .git directory; no new repo is created.
       - ..:/workspace:cached
       - /workspace/node_modules
     env_file:
       - .env.devcontainer
     command: sleep infinity
-    # Uncomment below when you're ready to add a database:
-    # depends_on:
-    #   - db
-
-  # db:
-  #   image: postgres:16-alpine
-  #   restart: unless-stopped
-  #   environment:
-    #   POSTGRES_USER: costingtool
-    #   POSTGRES_PASSWORD: changeme
-    #   POSTGRES_DB: costingtool
-    # ports:
-    #   - "5432:5432"
-    # volumes:
-    #   - db-data:/var/lib/postgresql/data
-
-# volumes:
-#   db-data:

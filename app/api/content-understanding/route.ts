@@ -4,11 +4,8 @@ import { hasSiteAccess } from "../../access";
 export const runtime = "edge";
 
 const DEFAULT_ENDPOINT = "https://gator-content-understanding.services.ai.azure.com";
-const DEFAULT_WINDING_ANALYZER_ID = "WindingSheetAnalyzer";
-const DEFAULT_DESIGN_PACKET_ANALYZER_ID = "DesignPacketAnalyzer";
+const DEFAULT_ANALYZER_ID = "DesignPacketClassifier";
 const DEFAULT_API_VERSION = "2025-11-01";
-const PAGE_RANGE_PATTERN = /^\d+(?:-\d*)?(?:,\d+(?:-\d*)?)*$/;
-type AnalyzerKind = "winding-sheet" | "design-packet";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const RESULT_PATH = "/contentunderstanding/analyzerResults/";
 const JOB_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
@@ -95,50 +92,77 @@ function normalizeFields(raw: unknown) {
   );
 }
 
-function fieldCount(content: Record<string, unknown>) {
+function hasFields(content: Record<string, unknown>) {
   return content.fields && typeof content.fields === "object" && !Array.isArray(content.fields)
-    ? Object.keys(content.fields).length
-    : 0;
+    ? Object.keys(content.fields).length > 0
+    : false;
 }
 
 function normalizeResult(payload: unknown, analyzerId: string, apiVersion: string) {
   const root = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
   const result = root.result && typeof root.result === "object" ? root.result as Record<string, unknown> : root;
   const contents = Array.isArray(result.contents) ? result.contents as Array<Record<string, unknown>> : [];
-  const documents = contents.filter((item) => item.kind === "document");
-  const content = documents.reduce<Record<string, unknown> | undefined>(
-    (best, item) => !best || fieldCount(item) > fieldCount(best) ? item : best,
-    undefined,
-  ) ?? documents[0] ?? contents[0] ?? {};
   const warnings = Array.isArray(result.warnings)
     ? result.warnings.map((item) => typeof item === "string" ? item : azureMessage(item, "Azure analyzer warning.")).slice(0, 25)
     : [];
+  const segments = contents.flatMap((content) => {
+    const parentPath = typeof content.path === "string" ? content.path : "input1";
+    const nested = Array.isArray(content.segments) ? content.segments as Array<Record<string, unknown>> : [];
+    return nested.map((segment) => {
+      const segmentId = String(segment.segmentId || "");
+      return {
+        path: segmentId ? `${parentPath}/${segmentId}` : parentPath,
+        segmentId,
+        category: String(segment.category || ""),
+        startPageNumber: typeof segment.startPageNumber === "number" ? segment.startPageNumber : null,
+        endPageNumber: typeof segment.endPageNumber === "number" ? segment.endPageNumber : null,
+        confidence: typeof segment.confidence === "number" ? segment.confidence : null,
+      };
+    });
+  });
+  const normalizedPath = (value: unknown) => String(value || "").replace(/^\/+|\/+$/g, "").toLowerCase();
+  const segmentsByPath = new Map(segments.map((segment) => [normalizedPath(segment.path), segment]));
+  const observations = contents.filter(hasFields).map((content) => {
+    const path = String(content.path || "");
+    const segment = segmentsByPath.get(normalizedPath(path));
+    return {
+      analyzerId: String(content.analyzerId || ""),
+      category: String(content.category || segment?.category || ""),
+      path,
+      startPageNumber: typeof content.startPageNumber === "number"
+        ? content.startPageNumber
+        : segment?.startPageNumber ?? null,
+      endPageNumber: typeof content.endPageNumber === "number"
+        ? content.endPageNumber
+        : segment?.endPageNumber ?? null,
+      markdown: typeof content.markdown === "string" ? content.markdown : "",
+      fields: normalizeFields(content.fields),
+      warnings,
+    };
+  });
 
   return {
     analyzerId: String(result.analyzerId || analyzerId),
     apiVersion: String(result.apiVersion || apiVersion),
-    markdown: typeof content.markdown === "string" ? content.markdown : "",
-    fields: normalizeFields(content.fields),
+    observations,
+    segments,
     warnings,
   };
 }
 
-function azureSettings(analyzerKind: AnalyzerKind = "winding-sheet") {
+function azureSettings() {
   const endpoint = (configured("AZURE_CONTENT_UNDERSTANDING_ENDPOINT") || DEFAULT_ENDPOINT).replace(/\/+$/g, "");
-  const analyzerId = analyzerKind === "design-packet"
-    ? configured("AZURE_CONTENT_UNDERSTANDING_DESIGN_PACKET_ANALYZER_ID") || DEFAULT_DESIGN_PACKET_ANALYZER_ID
-    : configured("AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID") || DEFAULT_WINDING_ANALYZER_ID;
+  const analyzerId = configured("AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID") || DEFAULT_ANALYZER_ID;
   const apiVersion = configured("AZURE_CONTENT_UNDERSTANDING_API_VERSION") || DEFAULT_API_VERSION;
   const key = configured("CONTENT_UNDERSTANDING_KEY");
   return { endpoint, analyzerId, apiVersion, key };
 }
 
-async function startAnalysis(endpoint: string, key: string, analyzerId: string, apiVersion: string, file: File, pageRange = "") {
+async function startAnalysis(endpoint: string, key: string, analyzerId: string, apiVersion: string, file: File) {
   const expected = new URL(endpoint);
   if (expected.protocol !== "https:") throw new ContentUnderstandingError("The Azure endpoint must use HTTPS.", 503);
 
   const query = new URLSearchParams({ "api-version": apiVersion });
-  if (pageRange) query.set("range", pageRange);
   const url = `${endpoint}/contentunderstanding/analyzers/${encodeURIComponent(analyzerId)}:analyzeBinary?${query.toString()}`;
   const response = await fetch(url, {
     method: "POST",
@@ -154,7 +178,7 @@ async function startAnalysis(endpoint: string, key: string, analyzerId: string, 
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     throw new ContentUnderstandingError(
-      azureMessage(payload, "Azure could not start winding-sheet analysis."),
+      azureMessage(payload, "Azure could not start document classification."),
       response.status === 429 ? 429 : 502,
     );
   }
@@ -184,7 +208,7 @@ async function getAnalysisResult(endpoint: string, operationId: string, apiVersi
     headers: { "Ocp-Apim-Subscription-Key": key },
     cache: "no-store",
   }).catch(() => null);
-  if (!response) throw new ContentUnderstandingError("Azure winding-sheet analysis was interrupted.", 502);
+  if (!response) throw new ContentUnderstandingError("Azure document classification was interrupted.", 502);
 
   const payload = await response.json().catch(() => null) as { status?: string } | null;
   if (!response.ok) {
@@ -196,7 +220,7 @@ async function getAnalysisResult(endpoint: string, operationId: string, apiVersi
 
   const status = String(payload?.status ?? "").toLowerCase();
   if (status === "failed") {
-    throw new ContentUnderstandingError(azureMessage(payload, "Azure could not analyze this winding sheet."), 422);
+    throw new ContentUnderstandingError(azureMessage(payload, "Azure could not analyze this document."), 422);
   }
   if (status === "succeeded") return { complete: true as const, payload };
   if (status === "running" || status === "notstarted") {
@@ -217,12 +241,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Enter the site password first." }, { status: 401 });
   }
   const searchParams = new URL(request.url).searchParams;
-  const analyzerKindValue = searchParams.get("analyzerKind") || "winding-sheet";
-  if (analyzerKindValue !== "winding-sheet" && analyzerKindValue !== "design-packet") {
-    return NextResponse.json({ error: "Choose a supported document analyzer." }, { status: 400 });
-  }
-  const analyzerKind = analyzerKindValue as AnalyzerKind;
-  const { endpoint, analyzerId, apiVersion, key } = azureSettings(analyzerKind);
+  const { endpoint, analyzerId, apiVersion, key } = azureSettings();
   const operationId = searchParams.get("operationId")?.trim() ?? "";
 
   if (operationId) {
@@ -275,16 +294,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "The uploaded document could not be read." }, { status: 400 });
   }
 
-  const analyzerKindValue = String(form.get("analyzerKind") || "winding-sheet");
-  if (analyzerKindValue !== "winding-sheet" && analyzerKindValue !== "design-packet") {
-    return NextResponse.json({ error: "Choose a supported document analyzer." }, { status: 400 });
-  }
-  const analyzerKind = analyzerKindValue as AnalyzerKind;
-  const pageRange = String(form.get("pageRange") || "").trim();
-  if (pageRange && !PAGE_RANGE_PATTERN.test(pageRange)) {
-    return NextResponse.json({ error: "The requested PDF page range is invalid." }, { status: 400 });
-  }
-  const { endpoint, analyzerId, apiVersion, key } = azureSettings(analyzerKind);
+  const { endpoint, analyzerId, apiVersion, key } = azureSettings();
   if (!key) {
     return NextResponse.json({ error: "Add CONTENT_UNDERSTANDING_KEY to .env.local, then restart the site." }, { status: 503 });
   }
@@ -301,7 +311,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const operationId = await startAnalysis(endpoint, key, analyzerId, apiVersion, file, pageRange);
+    const operationId = await startAnalysis(endpoint, key, analyzerId, apiVersion, file);
     return NextResponse.json(
       { status: "running", operationId, analyzerId, apiVersion, retryAfterMs: 2000 },
       { status: 202, headers: { "Cache-Control": "no-store", "Retry-After": "2" } },

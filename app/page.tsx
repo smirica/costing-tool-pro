@@ -1,14 +1,12 @@
 "use client";
 
 import { DragEvent, FormEvent, useEffect, useRef, useState } from "react";
-import { analyzeDesignPacket, type DesignPacketResult } from "./design-packet-reader";
+import { analyzeDocument, type DesignPacketResult } from "./design-packet-reader";
 import { DesignPacketResultPanel, ResultTabs, WindingResultPanel, type ResultView } from "./result-panels";
-import { AnalysisTimedOutError, analyzeWindingSheet, type WindingResult } from "./winding-reader";
+import { AnalysisTimedOutError, type WindingResult } from "./winding-reader";
 
 type Theme = "light" | "dark";
-type DocumentKind = "winding-sheet" | "design-packet";
 type AnalysisPhase = "idle" | "submitting" | "analyzing" | "complete" | "failed" | "timed-out";
-type AnalysisStage = "winding-sheet" | "design-packet";
 
 function formatElapsed(totalSeconds: number) {
   const minutes = Math.floor(totalSeconds / 60);
@@ -32,8 +30,6 @@ export default function Home() {
   const analysisControllerRef = useRef<AbortController | null>(null);
   const analysisRunRef = useRef(0);
   const analysisStartedAtRef = useRef<number | null>(null);
-  const [documentKind, setDocumentKind] = useState<DocumentKind>("winding-sheet");
-  const [analysisStage, setAnalysisStage] = useState<AnalysisStage>("winding-sheet");
   const [activeResult, setActiveResult] = useState<ResultView>("winding");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [phase, setPhase] = useState<AnalysisPhase>("idle");
@@ -51,8 +47,9 @@ export default function Home() {
   useEffect(() => {
     const savedTheme = window.localStorage.getItem("winding-intelligence-theme");
     const preferredTheme: Theme = savedTheme === "dark" ? "dark" : "light";
-    setTheme(preferredTheme);
     document.documentElement.dataset.theme = preferredTheme;
+    const frame = window.requestAnimationFrame(() => setTheme(preferredTheme));
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => () => analysisControllerRef.current?.abort(), []);
@@ -108,34 +105,8 @@ export default function Home() {
     }
   };
 
-  const clearAnalysis = () => {
-    analysisControllerRef.current?.abort();
-    analysisRunRef.current += 1;
-    setSelectedFile(null);
-    setWindingResult(null);
-    setDesignPacketResult(null);
-    setResultFileName("");
-    analysisStartedAtRef.current = null;
-    setElapsedSeconds(0);
-    setPhase("idle");
-    setAnalysisError("");
-    if (inputRef.current) inputRef.current.value = "";
-  };
-
-  const changeDocumentKind = (kind: DocumentKind) => {
-    if (kind === documentKind) return;
-    clearAnalysis();
-    setDocumentKind(kind);
-    setAnalysisStage(kind);
-    setActiveResult(kind === "design-packet" ? "design-packet" : "winding");
-  };
-
   const selectFile = (file?: File) => {
     if (!file) return;
-    if (documentKind === "design-packet" && file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
-      setAnalysisError("Design packets must be uploaded as PDF files.");
-      return;
-    }
     analysisControllerRef.current?.abort();
     analysisRunRef.current += 1;
     setSelectedFile(file);
@@ -161,35 +132,26 @@ export default function Home() {
     setWindingResult(null);
     setDesignPacketResult(null);
     setResultFileName("");
-    setAnalysisStage(documentKind);
     setPhase("submitting");
     setAnalysisError("");
 
     try {
-      if (documentKind === "design-packet") {
-        const nextResult = await analyzeDesignPacket(selectedFile, {
-          signal: controller.signal,
-          onProgress: (progress) => {
-            if (analysisRunRef.current === runId) setPhase(progress);
-          },
-          onStage: (stage) => {
-            if (analysisRunRef.current === runId) setAnalysisStage(stage);
-          },
-        });
-        if (analysisRunRef.current !== runId) return;        setDesignPacketResult(nextResult.designPacket);
-        setWindingResult(nextResult.windingSheet);
-        setActiveResult("design-packet");
-      } else {
-        const nextResult = await analyzeWindingSheet(selectedFile, {
-          signal: controller.signal,
-          onProgress: (progress) => {
-            if (analysisRunRef.current === runId) setPhase(progress);
-          },
-        });
-        if (analysisRunRef.current !== runId) return;
-        setWindingResult(nextResult);
-        setActiveResult("winding");
+      const nextResult = await analyzeDocument(selectedFile, {
+        signal: controller.signal,
+        onProgress: (progress) => {
+          if (analysisRunRef.current === runId) setPhase(progress);
+        },
+      });
+      if (analysisRunRef.current !== runId) return;
+      if (!nextResult.designPacket && !nextResult.windingSheet) {
+        const wasOther = nextResult.categories.some((category) => category.toLowerCase() === "other");
+        throw new Error(wasOther
+          ? "DesignPacketClassifier categorized this upload as Other. Choose a winding sheet or transformer design packet."
+          : "DesignPacketClassifier completed, but no routed analyzer fields were returned.");
       }
+      setDesignPacketResult(nextResult.designPacket);
+      setWindingResult(nextResult.windingSheet);
+      setActiveResult(nextResult.designPacket ? "design-packet" : "winding");
 
       setResultFileName(analyzedFileName);
       if (analysisStartedAtRef.current !== null) {
@@ -222,42 +184,34 @@ export default function Home() {
     return () => window.clearInterval(timer);
   }, [isBusy]);
 
-  const selectedLabel = documentKind === "design-packet" ? "design packet" : "winding sheet";
-  const analyzerLabel = analysisStage === "design-packet" ? "DesignPacketAnalyzer" : "WindingSheetAnalyzer";
-  const phaseLabel = phase === "submitting" ? `Submitting to ${analyzerLabel}`
-    : phase === "analyzing" ? `${analyzerLabel} analysis in progress`
+  const phaseLabel = phase === "submitting" ? "Submitting to DesignPacketClassifier"
+    : phase === "analyzing" ? "DesignPacketClassifier analysis in progress"
       : phase === "complete" ? "Analysis completed"
         : phase === "timed-out" ? "Analysis timed out"
           : phase === "failed" ? "Analysis failed"
-            : selectedFile ? "Ready to analyze" : `Waiting for a ${selectedLabel}`;
-  const buttonLabel = phase === "submitting" ? `Uploading ${selectedLabel}…`
-    : phase === "analyzing" ? analysisStage === "design-packet" ? "Azure is reading packet fields…" : "Azure is reading winding pages…"
-      : phase === "complete" ? "Analyze again" : `Analyze ${selectedLabel}`;
+            : selectedFile ? "Ready to analyze" : "Waiting for a document";
+  const buttonLabel = phase === "submitting" ? "Uploading document…"
+    : phase === "analyzing" ? "Azure is classifying and extracting…"
+      : phase === "complete" ? "Analyze again" : "Analyze document";
   const readerMessage = analysisError || (phase === "submitting"
-    ? `Sending ${selectedFile?.name || `the ${selectedLabel}`} to Azure…`
+    ? `Sending ${selectedFile?.name || "the document"} to Azure once…`
     : phase === "analyzing"
-      ? analysisStage === "design-packet"
-        ? "Reading cover, stop points, notes, Other Parts, and locating winding pages."
-        : documentKind === "design-packet"
-          ? "Packet fields are complete. The detected winding page is now being sent to WindingSheetAnalyzer."
-          : `Azure is processing ${selectedFile?.name || "the winding sheet"}. This can take several minutes.`
+      ? "The classifier is routing each segment and its linked analyzers are returning fields in the same Azure job."
       : phase === "complete" ? `Completed ${resultFileName}.`
         : selectedFile ? `${selectedFile.name} is selected. Its results will replace this empty panel only after Azure succeeds.`
-          : documentKind === "design-packet"
-            ? "Connected to DesignPacketAnalyzer, with winding pages routed to WindingSheetAnalyzer."
-            : "Connected to WindingSheetAnalyzer. Choose a file to begin.");
-  const emptyPanelTitle = isBusy ? `Reading ${selectedFile?.name || selectedLabel}`
+          : "Connected to DesignPacketClassifier. Choose a winding sheet or design packet to begin.");
+  const emptyPanelTitle = isBusy ? `Reading ${selectedFile?.name || "document"}`
     : phase === "failed" || phase === "timed-out" ? `No result returned for ${selectedFile?.name || "this file"}`
-      : selectedFile ? `${selectedFile.name} is ready` : `No ${selectedLabel} analyzed yet`;
+      : selectedFile ? `${selectedFile.name} is ready` : "No document analyzed yet";
   const emptyPanelDescription = isBusy
     ? "The page will keep checking the same Azure job. Previous document fields have been cleared."
     : phase === "failed" || phase === "timed-out"
       ? "The previous document is not shown. Review the message above, then retry when ready."
-      : selectedFile ? `Select Analyze ${selectedLabel} to send this file to Azure.`
-        : `Choose a ${documentKind === "design-packet" ? "PDF" : "PDF or image"} above. Extracted fields will appear here only after Azure reports success.`;
+      : selectedFile ? "Select Analyze document to send this file to Azure once."
+        : "Choose a PDF or image above. The classifier will identify and route it automatically.";
 
-  const showDesignPacket = activeResult === "design-packet" && designPacketResult;
-  const visibleResult = showDesignPacket || windingResult;
+  const showDesignPacket = Boolean(designPacketResult && (activeResult === "design-packet" || !windingResult));
+  const visibleResult = designPacketResult || windingResult;
   const openResultView = (view: ResultView) => {
     setActiveResult(view);
     resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -274,7 +228,7 @@ export default function Home() {
           {accessState === "checking" ? <p className="access-status">One moment while we check this browser.</p> : (
             <>
               <p>This public site does not require a ChatGPT account. Enter the shared password to open the costing reader.</p>
-              <form onSubmit={unlockSite}><label htmlFor="site-password">Password</label><div className="access-form-row"><input id="site-password" type="password" autoComplete="current-password" value={accessPassword} onChange={(event) => setAccessPassword(event.target.value)} autoFocus /><button type="submit" disabled={unlocking || !accessPassword}>{unlocking ? "Checking..." : "Unlock reader"}</button></div>{accessError && <p className="access-error" role="alert">{accessError}</p>}</form>
+              <form onSubmit={unlockSite}><label htmlFor="site-password">Password</label><div className="access-form-row"><input id="site-password" type="password" autoComplete="current-password" value={accessPassword} onChange={(event) => setAccessPassword(event.target.value)} /><button type="submit" disabled={unlocking || !accessPassword}>{unlocking ? "Checking..." : "Unlock reader"}</button></div>{accessError && <p className="access-error" role="alert">{accessError}</p>}</form>
               <small>Access stays unlocked in this browser for up to 8 hours.</small>
             </>
           )}
@@ -294,30 +248,22 @@ export default function Home() {
         <div className="hero-copy">
           <span className="eyebrow">DOCUMENT TO COSTING DATA</span>
           <h1>From design packet<br />to <em>cost-ready</em> data.</h1>
-          <p>Upload a winding sheet or a complete design packet. The Reader keeps packet fields, Other Parts tables, and winding data reviewable and separate.</p>
-          <div className="trust-row"><span>PDF &amp; image files</span><span>Human review built in</span><span>Two-stage Azure reading</span></div>
+          <p>Upload a winding sheet or a complete design packet. One classifier routes packet and winding fields into separate, reviewable results.</p>
+          <div className="trust-row"><span>PDF &amp; image files</span><span>Human review built in</span><span>Single-pass Azure routing</span></div>
         </div>
 
         <div className="reader-column">
           <div className="reader-card">
             <div className="reader-card-head"><div><span className="step-label">STEP 01</span><h2>Add an engineering document</h2></div><span className="secure-chip">Private</span></div>
-            <div className="document-kind-switch" role="group" aria-label="Document type">
-              <button type="button" className={documentKind === "winding-sheet" ? "is-active" : ""} aria-pressed={documentKind === "winding-sheet"} onClick={() => changeDocumentKind("winding-sheet")}>Winding sheet</button>
-              <button type="button" className={documentKind === "design-packet" ? "is-active" : ""} aria-pressed={documentKind === "design-packet"} onClick={() => changeDocumentKind("design-packet")}>Design packet</button>
-            </div>
             <button className="drop-zone" type="button" onClick={() => inputRef.current?.click()} onDrop={onDrop} onDragOver={(event) => event.preventDefault()}>
               <span className="upload-orb" aria-hidden="true">{selectedFile ? "✓" : "↑"}</span><strong>{selectedFile?.name || "Drop your file here"}</strong>
-              <span>{selectedFile ? `Ready for ${documentKind === "design-packet" ? "DesignPacketAnalyzer" : "WindingSheetAnalyzer"}` : documentKind === "design-packet" ? "or click to browse · PDF" : "or click to browse · PDF, PNG, JPG, TIFF"}</span>
+              <span>{selectedFile ? "Ready for DesignPacketClassifier" : "or click to browse · PDF, PNG, JPG, TIFF"}</span>
             </button>
-            <input ref={inputRef} className="sr-only" type="file" accept={documentKind === "design-packet" ? ".pdf,application/pdf" : ".pdf,.png,.jpg,.jpeg,.tif,.tiff"} onChange={(event) => selectFile(event.target.files?.[0])} />
+            <input ref={inputRef} className="sr-only" type="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff" onChange={(event) => selectFile(event.target.files?.[0])} />
             <button className="analyze-button" type="button" disabled={!selectedFile || isBusy} onClick={analyze}><span>{buttonLabel}</span><span aria-hidden="true">{isBusy ? "···" : "→"}</span></button>
             <div className={`analysis-state status-${phase}`} role="status" aria-live="polite"><i aria-hidden="true" /><strong>{phaseLabel}</strong></div>
             <p className={analysisError ? "reader-note reader-error" : "reader-note"}>{readerMessage}</p>
           </div>
-          <button className="design-results-shortcut" type="button" disabled={!designPacketResult} onClick={() => openResultView("design-packet")}>
-            <span><small>VIEW</small><strong>Design packet results</strong></span>
-            <span>{designPacketResult ? `${designPacketResult.assemblies.length} Other Parts` : "Available after packet analysis"} <b aria-hidden="true">→</b></span>
-          </button>
         </div>
       </section>
 

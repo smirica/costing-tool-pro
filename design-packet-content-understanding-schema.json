@@ -1,7 +1,7 @@
 {
   "fieldSchema": {
     "name": "DesignPacketAnalyzer",
-    "description": "Focused schema for Dongan/Pioneer transformer design packets. Extract only cover identity, cover stop points and notes, Other Parts assembly tables, and winding-sheet page numbers. Ignore the Master Sheet completely and ignore every General Notes block. Do not extract winding fields.",
+    "description": "Focused schema for Dongan/Pioneer transformer design-packet segments routed by DesignPacketClassifier. Extract only cover identity, cover stop points and notes, and Other Parts assembly tables. Ignore the Master Sheet completely and ignore every General Notes block. Do not extract winding fields.",
     "fields": {
       "DocumentHeader": {
         "type": "object",
@@ -63,16 +63,6 @@
         "method": "extract",
         "estimateSourceAndConfidence": true,
         "description": "One field containing only the Cover Sheet notes section or sections, preserving printed order and wording. Include headings such as Notes for Quality and Testing, Notes for Packaging and Shipping, or Notes for Press Room. Never include any Other Parts General Notes, Master Sheet notes, winding notes, or parts-table instructions."
-      },
-      "EmbeddedWindingSheetPageNumbers": {
-        "type": "array",
-        "method": "generate",
-        "description": "Sorted one-based PDF page numbers that are actual winding sheets. Return only integers, such as [4]. This small routing field lets the application send only those pages to WindingSheetAnalyzer. Ignore Master Sheets and assembly pages.",
-        "items": {
-          "type": "integer",
-          "method": "generate",
-          "description": "One-based PDF page number of an embedded winding sheet."
-        }
       },
       "OtherPartsAssemblies": {
         "type": "array",

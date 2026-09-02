@@ -1,0 +1,24 @@
+{
+  "baseAnalyzerId": "prebuilt-document",
+  "description": "Classify and route transformer engineering documents. Split mixed, multi-page files so winding-sheet pages and design-packet pages can be processed by their specialized analyzers, while unrelated uploads are identified as Other and are not sent to an extraction analyzer.",
+  "config": {
+    "returnDetails": true,
+    "enableSegment": true,
+    "contentCategories": {
+      "Winding_Sheet": {
+        "description": "A transformer winding sheet or a consecutive group of winding-sheet pages, whether uploaded alone or embedded inside a larger design packet. Identify pages whose main purpose is to specify coil or winding construction and that contain winding-specific tables or labels such as winding number, coil dimensions, turns, conductor or wire size, material, insulation, ducts, layers, sections, tap or start-finish connection details, and winding notes. Route the complete winding-sheet page group here. Do not classify a cover sheet, master sheet, bill of material, general drawing, or Other Parts assembly table as a winding sheet merely because it mentions a winding.",
+        "analyzerId": "WindingSheetAnalyzer"
+      },
+      "Design_Packet": {
+        "description": "Pages belonging to a transformer design packet that are not themselves winding sheets. This includes packet cover sheets, document identity and revision pages, stop-points tables, quality or testing notes, packaging or shipping notes, master sheets, print-summary pages, bills of material, and Other Parts assembly or parts-table pages. A multi-page design packet can contain both Design_Packet segments and Winding_Sheet segments; keep actual winding-sheet pages out of this category so they can be routed separately to WindingSheetAnalyzer.",
+        "analyzerId": "DesignPacketAnalyzer"
+      },
+      "Other": {
+        "description": "Any unsupported, irrelevant, unreadable, blank, or incorrectly uploaded content that is neither a transformer winding sheet nor part of a transformer design packet. Examples include invoices, purchase orders, correspondence, unrelated engineering drawings, photographs without a readable winding sheet, and arbitrary files. Do not route this category to an extraction analyzer."
+      }
+    }
+  },
+  "models": {
+    "completion": "gpt-5.2"
+  }
+}

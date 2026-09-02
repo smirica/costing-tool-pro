@@ -13,10 +13,19 @@ Intelligence. Local development and the public tunnel have separate lifecycles:
 
 1. Copy `.devcontainer/.env.devcontainer.example` to
    `.devcontainer/.env.devcontainer`.
-2. Fill in the site password, Azure Content Understanding values, and
+2. Fill in the site password, the existing Azure Content Understanding key,
+   `AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID=DesignPacketClassifier`, and
    `NGROK_AUTHTOKEN`.
 3. Keep the assigned `NGROK_URL` value unless the ngrok account changes.
 4. In VS Code, run **Dev Containers: Reopen in Container**.
+
+Git and GitHub CLI are installed in the container. VS Code forwards the host's
+Git credentials when available; run `gh auth status` inside the container to
+confirm the GitHub session before the first push.
+
+The existing repository, including its `.git` directory, is bind-mounted at
+`/workspace`. Container setup marks that path as a trusted Git working tree. It
+does not run `git init`, clone another repository, or replace the current remote.
 
 The real `.env.devcontainer` file is ignored by Git and Docker. Only the
 placeholder example is committed.

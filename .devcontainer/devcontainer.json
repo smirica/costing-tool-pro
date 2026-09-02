@@ -14,12 +14,16 @@
       "onAutoForward": "notify"
     }
   },
-  "postCreateCommand": "npm install",
+  "postCreateCommand": "git config --global --add safe.directory /workspace && npm install",
   "postStartCommand": "npm run dev > /tmp/costingtool-dev.log 2>&1 &",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
   "customizations": {
     "vscode": {
       "extensions": [
         "ms-azuretools.vscode-docker",
+        "github.vscode-pull-request-github",
         "tailwindlabs.tailwindcss-intellisense",
         "dbaeumer.vscode-eslint"
       ]
