@@ -110,8 +110,9 @@ function normalizeResult(payload: unknown, analyzerId: string, apiVersion: strin
     const nested = Array.isArray(content.segments) ? content.segments as Array<Record<string, unknown>> : [];
     return nested.map((segment) => {
       const segmentId = String(segment.segmentId || "");
+      const returnedPath = String(segment.path || "");
       return {
-        path: segmentId ? `${parentPath}/${segmentId}` : parentPath,
+        path: returnedPath || (segmentId.includes("/") ? segmentId : segmentId ? `${parentPath}/${segmentId}` : parentPath),
         segmentId,
         category: String(segment.category || ""),
         startPageNumber: typeof segment.startPageNumber === "number" ? segment.startPageNumber : null,
@@ -124,7 +125,9 @@ function normalizeResult(payload: unknown, analyzerId: string, apiVersion: strin
   const segmentsByPath = new Map(segments.map((segment) => [normalizedPath(segment.path), segment]));
   const observations = contents.filter(hasFields).map((content) => {
     const path = String(content.path || "");
-    const segment = segmentsByPath.get(normalizedPath(path));
+    const pathTail = normalizedPath(path).split("/").pop();
+    const segment = segmentsByPath.get(normalizedPath(path))
+      || segments.find((item) => normalizedPath(item.segmentId) === pathTail);
     return {
       analyzerId: String(content.analyzerId || ""),
       category: String(content.category || segment?.category || ""),

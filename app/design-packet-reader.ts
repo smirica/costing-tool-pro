@@ -154,6 +154,44 @@ function pagesForCategory(analysis: ContentUnderstandingAnalysis, categoryName: 
   return Array.from(pages).sort((a, b) => a - b);
 }
 
+function addPageRange(pages: Set<number>, start: number | null, end: number | null) {
+  if (start === null || end === null || start < 1 || end < start) return;
+  for (let page = start; page <= end; page += 1) pages.add(page);
+}
+
+function addNestedSourcePages(value: unknown, pages: Set<number>) {
+  if (Array.isArray(value)) {
+    for (const item of value) addNestedSourcePages(item, pages);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  for (const [name, item] of Object.entries(value as Record<string, unknown>)) {
+    if (normalizedCategory(name) === "sourcepage") {
+      const page = numberValue(item);
+      if (page !== null && page >= 1) pages.add(page);
+    }
+    addNestedSourcePages(item, pages);
+  }
+}
+
+function pagesForWinding(
+  analysis: ContentUnderstandingAnalysis,
+  observation: ContentUnderstandingObservation | null,
+) {
+  const pages = new Set(pagesForCategory(analysis, "Winding_Sheet"));
+  if (!observation) return Array.from(pages).sort((a, b) => a - b);
+
+  addPageRange(pages, observation.startPageNumber, observation.endPageNumber);
+  for (const field of Object.values(observation.fields)) {
+    addNestedSourcePages(field.value, pages);
+    for (const match of field.source?.matchAll(/\bD\((\d+),/g) ?? []) {
+      const page = Number(match[1]);
+      if (Number.isInteger(page) && page >= 1) pages.add(page);
+    }
+  }
+  return Array.from(pages).sort((a, b) => a - b);
+}
+
 export function designPacketFromObservation(
   observation: ContentUnderstandingObservation,
   windingSheetPages: number[] = [],
@@ -224,7 +262,7 @@ export async function analyzeDocument(
 
   return {
     designPacket: designObservation
-      ? designPacketFromObservation(designObservation, pagesForCategory(analysis, "Winding_Sheet"))
+      ? designPacketFromObservation(designObservation, pagesForWinding(analysis, windingObservation))
       : null,
     windingSheet: windingObservation ? resultFromObservation(windingObservation) : null,
     categories,

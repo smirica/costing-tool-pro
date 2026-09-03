@@ -113,6 +113,10 @@ test("uses one classifier operation and reads fields from routed segments", asyn
   assert.match(route, /segments/);
   assert.match(route, /segmentsByPath\.get\(normalizedPath\(path\)\)/);
   assert.match(route, /content\.category \|\| segment\?\.category/);
+  assert.match(route, /segmentId\.includes\("\/"\)/);
+  assert.match(packetReader, /pagesForWinding\(analysis, windingObservation\)/);
+  assert.match(packetReader, /addNestedSourcePages\(field\.value, pages\)/);
+  assert.match(packetReader, /field\.source\?\.matchAll/);
   assert.doesNotMatch(route, /AZURE_CONTENT_UNDERSTANDING_DESIGN_PACKET_ANALYZER_ID|query\.set\("range"/);
   assert.doesNotMatch(page, /design-results-shortcut/);
   assert.match(page, /DesignPacketResultPanel/);
@@ -128,8 +132,14 @@ test("defines Azure Content Understanding routing for winding sheets, design pac
   const classifier = JSON.parse(classifierText);
   assert.equal(classifier.baseAnalyzerId, "prebuilt-document");
   assert.equal(classifier.config.enableSegment, true);
+  assert.equal(classifier.config.segmentPerPage, false);
   assert.equal(classifier.config.contentCategories.Winding_Sheet.analyzerId, "WindingSheetAnalyzer");
   assert.equal(classifier.config.contentCategories.Design_Packet.analyzerId, "DesignPacketAnalyzer");
   assert.ok(classifier.config.contentCategories.Other);
   assert.equal(classifier.config.contentCategories.Other.analyzerId, undefined);
+});
+
+test("allows multipart uploads large enough for the documented 20 MB file limit", async () => {
+  const nextConfig = await readFile(new URL("next.config.ts", root), "utf8");
+  assert.match(nextConfig, /bodySizeLimit:\s*"25mb"/);
 });

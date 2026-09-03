@@ -4,6 +4,7 @@
   "config": {
     "returnDetails": true,
     "enableSegment": true,
+    "segmentPerPage": false,
     "contentCategories": {
       "Winding_Sheet": {
         "description": "A transformer winding sheet or a consecutive group of winding-sheet pages, whether uploaded alone or embedded inside a larger design packet. Identify pages whose main purpose is to specify coil or winding construction and that contain winding-specific tables or labels such as winding number, coil dimensions, turns, conductor or wire size, material, insulation, ducts, layers, sections, tap or start-finish connection details, and winding notes. Route the complete winding-sheet page group here. Do not classify a cover sheet, master sheet, bill of material, general drawing, or Other Parts assembly table as a winding sheet merely because it mentions a winding.",
@@ -19,6 +20,8 @@
     }
   },
   "models": {
-    "completion": "gpt-5.2"
-  }
+    "completion": "gpt-5",
+    "embedding": "text-embedding-3-large"
+  },
+  "processingLocation": "geography"
 }

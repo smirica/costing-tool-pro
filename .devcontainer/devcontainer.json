@@ -14,6 +14,9 @@
       "onAutoForward": "notify"
     }
   },
+  "otherPortsAttributes": {
+    "onAutoForward": "ignore"
+  },
   "postCreateCommand": "git config --global --add safe.directory /workspace && npm install",
   "postStartCommand": "npm run dev > /tmp/costingtool-dev.log 2>&1 &",
   "features": {
