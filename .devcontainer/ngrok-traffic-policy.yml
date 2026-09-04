@@ -1,7 +1,0 @@
-on_http_response:
-  - name: Mark responses from the live local app
-    actions:
-      - type: add-headers
-        config:
-          headers:
-            x-winding-live-origin: local-dev

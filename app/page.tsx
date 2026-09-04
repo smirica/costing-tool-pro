@@ -4,14 +4,41 @@ import { DragEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { analyzeDocument, type DesignPacketResult } from "./design-packet-reader";
 import { DesignPacketResultPanel, ResultTabs, WindingResultPanel, type ResultView } from "./result-panels";
 import { AnalysisTimedOutError, type WindingResult } from "./winding-reader";
+import {
+  COST_ANALYSIS_STORAGE_KEY,
+  DOCUMENT_ANALYSIS_STORAGE_KEY,
+  type SteelCostInputs,
+} from "./cost-analysis-data";
 
 type Theme = "light" | "dark";
 type AnalysisPhase = "idle" | "submitting" | "analyzing" | "complete" | "failed" | "timed-out";
+type PersistedDocumentAnalysis = {
+  activeResult: ResultView;
+  windingResult: WindingResult | null;
+  designPacketResult: DesignPacketResult | null;
+  resultFileName: string;
+  elapsedSeconds: number;
+};
 
 function formatElapsed(totalSeconds: number) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function normalizeSteelPartNumber(value: string) {
+  return value.toUpperCase().replace(/\s+/g, "").replace(/^510[^A-Z0-9]?/, "510-");
+}
+
+function titledDescription(title: string, description: string) {
+  const cleanTitle = title.replace(/\s+/g, " ").trim();
+  let cleanDescription = description.replace(/\s+/g, " ").trim();
+  const titleIndex = cleanTitle ? cleanDescription.toLowerCase().indexOf(cleanTitle.toLowerCase()) : -1;
+  if (titleIndex >= 0) cleanDescription = cleanDescription.slice(titleIndex + cleanTitle.length).replace(/^[\s:\u2013\u2014-]+/, "");
+  const coreIndex = cleanDescription.search(/\bcore\b/i);
+  if (coreIndex > 0) cleanDescription = cleanDescription.slice(coreIndex);
+  const values = [cleanTitle, cleanDescription].filter(Boolean);
+  return values.filter((value, index) => index === 0 || value.toLowerCase() !== values[0].toLowerCase()).join(" - ");
 }
 
 function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
@@ -50,6 +77,23 @@ export default function Home() {
     document.documentElement.dataset.theme = preferredTheme;
     const frame = window.requestAnimationFrame(() => setTheme(preferredTheme));
     return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    const raw = window.sessionStorage.getItem(DOCUMENT_ANALYSIS_STORAGE_KEY);
+    if (!raw) return;
+    try {
+      const saved = JSON.parse(raw) as PersistedDocumentAnalysis;
+      if (!saved.resultFileName || (!saved.designPacketResult && !saved.windingResult)) return;
+      setActiveResult(saved.activeResult || (saved.designPacketResult ? "design-packet" : "winding"));
+      setDesignPacketResult(saved.designPacketResult);
+      setWindingResult(saved.windingResult);
+      setResultFileName(saved.resultFileName);
+      setElapsedSeconds(saved.elapsedSeconds || 0);
+      setPhase("complete");
+    } catch {
+      window.sessionStorage.removeItem(DOCUMENT_ANALYSIS_STORAGE_KEY);
+    }
   }, []);
 
   useEffect(() => () => analysisControllerRef.current?.abort(), []);
@@ -109,6 +153,8 @@ export default function Home() {
     if (!file) return;
     analysisControllerRef.current?.abort();
     analysisRunRef.current += 1;
+    window.sessionStorage.removeItem(DOCUMENT_ANALYSIS_STORAGE_KEY);
+    window.sessionStorage.removeItem(COST_ANALYSIS_STORAGE_KEY);
     setSelectedFile(file);
     setWindingResult(null);
     setDesignPacketResult(null);
@@ -149,14 +195,24 @@ export default function Home() {
           ? "DesignPacketClassifier categorized this upload as Other. Choose a winding sheet or transformer design packet."
           : "DesignPacketClassifier completed, but no routed analyzer fields were returned.");
       }
+      const nextActiveResult: ResultView = nextResult.designPacket ? "design-packet" : "winding";
+      const finishedElapsed = analysisStartedAtRef.current === null
+        ? 0
+        : Math.max(1, Math.ceil((Date.now() - analysisStartedAtRef.current) / 1000));
+      const saved: PersistedDocumentAnalysis = {
+        activeResult: nextActiveResult,
+        designPacketResult: nextResult.designPacket,
+        windingResult: nextResult.windingSheet,
+        resultFileName: analyzedFileName,
+        elapsedSeconds: finishedElapsed,
+      };
+
       setDesignPacketResult(nextResult.designPacket);
       setWindingResult(nextResult.windingSheet);
-      setActiveResult(nextResult.designPacket ? "design-packet" : "winding");
-
+      setActiveResult(nextActiveResult);
       setResultFileName(analyzedFileName);
-      if (analysisStartedAtRef.current !== null) {
-        setElapsedSeconds(Math.max(1, Math.ceil((Date.now() - analysisStartedAtRef.current) / 1000)));
-      }
+      setElapsedSeconds(finishedElapsed);
+      window.sessionStorage.setItem(DOCUMENT_ANALYSIS_STORAGE_KEY, JSON.stringify(saved));
       setPhase("complete");
       resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     } catch (error) {
@@ -192,7 +248,7 @@ export default function Home() {
             : selectedFile ? "Ready to analyze" : "Waiting for a document";
   const buttonLabel = phase === "submitting" ? "Uploading document…"
     : phase === "analyzing" ? "Azure is classifying and extracting…"
-      : phase === "complete" ? "Analyze again" : "Analyze document";
+      : phase === "complete" ? (selectedFile ? "Analyze again" : "Choose another file") : "Analyze document";
   const readerMessage = analysisError || (phase === "submitting"
     ? `Sending ${selectedFile?.name || "the document"} to Azure once…`
     : phase === "analyzing"
@@ -215,6 +271,29 @@ export default function Home() {
   const openResultView = (view: ResultView) => {
     setActiveResult(view);
     resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const openCostAnalysis = () => {
+    if (!visibleResult) return;
+    const steelParts = designPacketResult?.assemblies.flatMap((assembly) => assembly.parts
+      .map((part) => ({ ...part, partNumber: normalizeSteelPartNumber(part.partNumber) }))
+      .filter((part) => /^510(?:-|(?=[A-Z0-9]))/i.test(part.partNumber))
+      .map((part) => ({
+        ...part,
+        title: assembly.title,
+        description: titledDescription(assembly.title, part.description),
+        sourceAssembly: assembly.otherPartNumber,
+      }))) || [];
+    const inputs: SteelCostInputs = {
+      fileName: resultFileName,
+      catalogNumber: designPacketResult?.header.catalogNumber || windingResult?.catalogNumber || "Catalog number not found",
+      capturedAt: new Date().toISOString(),
+      steelGrade: windingResult?.steelGrade || "",
+      steelWeightLbs: windingResult?.steelWeight || 0,
+      parts: steelParts,
+    };
+    window.sessionStorage.setItem(COST_ANALYSIS_STORAGE_KEY, JSON.stringify(inputs));
+    window.location.assign("/cost-analysis");
   };
 
   if (accessState !== "granted") {
@@ -256,14 +335,20 @@ export default function Home() {
           <div className="reader-card">
             <div className="reader-card-head"><div><span className="step-label">STEP 01</span><h2>Add an engineering document</h2></div><span className="secure-chip">Private</span></div>
             <button className="drop-zone" type="button" onClick={() => inputRef.current?.click()} onDrop={onDrop} onDragOver={(event) => event.preventDefault()}>
-              <span className="upload-orb" aria-hidden="true">{selectedFile ? "✓" : "↑"}</span><strong>{selectedFile?.name || "Drop your file here"}</strong>
-              <span>{selectedFile ? "Ready for DesignPacketClassifier" : "or click to browse · PDF, PNG, JPG, TIFF"}</span>
+              <span className="upload-orb" aria-hidden="true">{selectedFile || resultFileName ? "✓" : "↑"}</span><strong>{selectedFile?.name || resultFileName || "Drop your file here"}</strong>
+              <span>{selectedFile ? "Ready for DesignPacketClassifier" : resultFileName ? "Results retained · choose a new file only when you want to replace them" : "or click to browse · PDF, PNG, JPG, TIFF"}</span>
             </button>
             <input ref={inputRef} className="sr-only" type="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff" onChange={(event) => selectFile(event.target.files?.[0])} />
             <button className="analyze-button" type="button" disabled={!selectedFile || isBusy} onClick={analyze}><span>{buttonLabel}</span><span aria-hidden="true">{isBusy ? "···" : "→"}</span></button>
             <div className={`analysis-state status-${phase}`} role="status" aria-live="polite"><i aria-hidden="true" /><strong>{phaseLabel}</strong></div>
             <p className={analysisError ? "reader-note reader-error" : "reader-note"}>{readerMessage}</p>
           </div>
+          {visibleResult && (
+            <button className="cost-analysis-launch" type="button" onClick={openCostAnalysis}>
+              <span><small>NEXT STEP</small><strong>Open steel cost analysis</strong></span>
+              <span aria-hidden="true">→</span>
+            </button>
+          )}
         </div>
       </section>
 

@@ -143,3 +143,84 @@ test("allows multipart uploads large enough for the documented 20 MB file limit"
   const nextConfig = await readFile(new URL("next.config.ts", root), "utf8");
   assert.match(nextConfig, /bodySizeLimit:\s*"25mb"/);
 });
+
+
+test("retains the analyzed packet across page navigation until a new file is selected", async () => {
+  const [page, data] = await Promise.all([
+    readFile(new URL("app/page.tsx", root), "utf8"),
+    readFile(new URL("app/cost-analysis-data.ts", root), "utf8"),
+  ]);
+  assert.match(data, /DOCUMENT_ANALYSIS_STORAGE_KEY/);
+  assert.match(page, /sessionStorage\.getItem\(DOCUMENT_ANALYSIS_STORAGE_KEY\)/);
+  assert.match(page, /sessionStorage\.setItem\(DOCUMENT_ANALYSIS_STORAGE_KEY/);
+  assert.match(page, /selectFile[\s\S]*sessionStorage\.removeItem\(DOCUMENT_ANALYSIS_STORAGE_KEY\)/);
+  assert.match(page, /Results retained/);
+});
+
+test("hands every normalized 510 part to the priced workspace with clean title-first descriptions", async () => {
+  const [page, workspace, packetReader] = await Promise.all([
+    readFile(new URL("app/page.tsx", root), "utf8"),
+    readFile(new URL("app/cost-analysis/steel-cost-workspace.tsx", root), "utf8"),
+    readFile(new URL("app/design-packet-reader.ts", root), "utf8"),
+  ]);
+  assert.match(page, /normalizeSteelPartNumber\(part\.partNumber\)/);
+  assert.match(page, /title:\s*assembly\.title/);
+  assert.match(page, /description:\s*titledDescription\(assembly\.title, part\.description\)/);
+  assert.match(page, /titleIndex[\s\S]*cleanDescription\.slice/);
+  assert.match(workspace, /cleanDisplayDescription\(part\.description\)/);
+  assert.match(workspace, /Tempel part number match/);
+  assert.match(workspace, /Vendor item master match/);
+  assert.match(workspace, /Would you like to use this closest match/);
+  assert.match(workspace, /Tempel and vendor calculations/);
+  assert.match(workspace, /Current Tempel calculated price/);
+  assert.match(workspace, /Vendor Master cost/);
+  assert.match(workspace, /Difference \(Tempel - vendor\)/);
+  assert.match(workspace, /Vendor last-cost date/);
+  assert.match(workspace, /Vendor Item Master: LAST DTE/);
+  assert.match(workspace, /Source code; definition not provided/);
+  assert.match(workspace, /PO price formula/);
+  assert.match(packetReader, /recover510PartsFromMarkdown\(observation\.markdown\)/);
+});
+
+test("uses the live BLS steel index with a FRED fallback for market-adjusted vendor comparisons", async () => {
+  const [route, workspace] = await Promise.all([
+    readFile(new URL("app/api/steel-market/route.ts", root), "utf8"),
+    readFile(new URL("app/cost-analysis/steel-cost-workspace.tsx", root), "utf8"),
+  ]);
+  assert.match(route, /SERIES_ID = "WPU1017"/);
+  assert.match(route, /api\.bls\.gov\/publicAPI\/v2\/timeseries\/data/);
+  assert.match(route, /api\.stlouisfed\.org\/fred\/series\/observations/);
+  assert.match(route, /BLS_API_KEY/);
+  assert.match(route, /FRED_API_KEY/);
+  assert.match(route, /hasSiteAccess\(request\)/);
+  assert.match(route, /Cross-origin market lookup is not allowed/);
+  assert.match(workspace, /latest index.*index in the vendor last-cost month/i);
+  assert.match(workspace, /Adjusted vendor estimate/);
+  assert.match(workspace, /marketAdjustedVendorCost/);
+});
+
+test("loads the Tempel and vendor 510 snapshots behind the site access check", async () => {
+  const [route, catalogText, envExample] = await Promise.all([
+    readFile(new URL("app/api/steel-pricing/route.ts", root), "utf8"),
+    readFile(new URL("app/steel-pricing-catalog.json", root), "utf8"),
+    readFile(new URL(".env.example", root), "utf8"),
+  ]);
+  const catalog = JSON.parse(catalogText);
+  const target = catalog.tempel.find((row) => row[0] === "510-EI1.7524M50");
+  assert.ok(target);
+  assert.equal(target[2], "0175 MS0250 285A");
+  assert.equal(target[9].toFixed(4), "1.3174");
+  const vendor = catalog.vendor.find((row) => row[0] === "510-EI1.7524M50" && row[1] === "09400");
+  assert.ok(vendor);
+  assert.equal(vendor[6], 0.16);
+  assert.equal(vendor[8], "2026-05-12");
+  const tempelTotal = 100 * target[6] / 1000 * target[9];
+  const vendorTotal = 100 * vendor[6];
+  assert.equal(tempelTotal.toFixed(2), "16.54");
+  assert.equal(vendorTotal.toFixed(2), "16.00");
+  assert.equal((tempelTotal - vendorTotal).toFixed(2), "0.54");
+  assert.match(route, /hasSiteAccess\(request\)/);
+  assert.match(route, /Cross-origin pricing lookup is not allowed/);
+  assert.match(envExample, /BLS_API_KEY=/);
+  assert.match(envExample, /FRED_API_KEY=/);
+});

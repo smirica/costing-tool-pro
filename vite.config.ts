@@ -13,6 +13,8 @@ const LOCAL_ENV_KEYS = [
   "AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID",
   "AZURE_CONTENT_UNDERSTANDING_API_VERSION",
   "CONTENT_UNDERSTANDING_KEY",
+  "BLS_API_KEY",
+  "FRED_API_KEY",
 ];
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.

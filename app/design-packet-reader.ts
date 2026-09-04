@@ -71,6 +71,85 @@ const numberValue = (value: unknown): number | null => {
 };
 const normalizedCategory = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
 
+type RecoveredMarkdownPart = DesignPacketPartRow & {
+  title: string;
+  otherPartNumber: string;
+};
+
+function cleanMarkdownCell(value: string) {
+  return text(value
+    .replace(/[\u2010-\u2015\u2212]/g, "-")
+    .replace(/<br\s*\/?\s*>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'"));
+}
+
+function markdownContext(markdown: string, rowIndex: number, description: string) {
+  const context = cleanMarkdownCell(markdown.slice(Math.max(0, rowIndex - 1500), rowIndex));
+  const titles = Array.from(context.matchAll(/\b([A-Z][A-Za-z&/ -]{1,40} Assembly)\b/gi));
+  const assemblyNumbers = Array.from(context.matchAll(/\b(?:\d+[A-Z]|[A-Z]\d+)-\d{3,}\b/gi));
+  return {
+    title: titles.at(-1)?.[1] || (/\bLAM\b/i.test(description) ? "Core Assembly" : "Other parts"),
+    otherPartNumber: assemblyNumbers.at(-1)?.[0] || "Recovered 510 parts",
+  };
+}
+
+function recoveredMarkdownRow(markdown: string, rawCells: string[], rowIndex: number): RecoveredMarkdownPart | null {
+  const cells = rawCells.map(cleanMarkdownCell).filter(Boolean);
+  const partIndex = cells.findIndex((cell) => /\b510(?:[\s.-]*[A-Z0-9])/i.test(cell));
+  if (partIndex < 0) return null;
+
+  const partMatch = cells[partIndex].match(/\b510(?:[\s.-]*[A-Z0-9][A-Z0-9./-]*)/i);
+  if (!partMatch) return null;
+  const partNumber = partMatch[0].replace(/\s+/g, "").replace(/^510[.-]?/i, "510-").toUpperCase();
+  const quantityIndex = cells.findIndex((cell, index) => index !== partIndex && /^\d+(?:\.\d+)?$/.test(cell.replace(/,/g, "")));
+  const unitIndex = cells.findIndex((cell, index) => index !== partIndex && /^(?:EA|EACH|PC|PCS|PIECE|PIECES|LB|LBS|POUND|POUNDS|M)$/i.test(cell));
+  const quantity = quantityIndex >= 0 ? numberValue(cells[quantityIndex]) : null;
+  const unitOfMeasure = unitIndex >= 0 ? cells[unitIndex].toUpperCase() : "";
+  const description = cells
+    .filter((_, index) => index !== partIndex && index !== quantityIndex && index !== unitIndex)
+    .join(" ")
+    .replace(partMatch[0], "")
+    .trim();
+  const context = markdownContext(markdown, rowIndex, description);
+  return { partNumber, quantity, unitOfMeasure, description, ...context };
+}
+
+export function recover510PartsFromMarkdown(markdown: string): RecoveredMarkdownPart[] {
+  if (!markdown) return [];
+  const candidates: RecoveredMarkdownPart[] = [];
+  const add = (cells: string[], rowIndex: number) => {
+    const part = recoveredMarkdownRow(markdown, cells, rowIndex);
+    if (part) candidates.push(part);
+  };
+
+  for (const match of markdown.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
+    const cells = Array.from(match[1].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi), (cell) => cell[1]);
+    if (cells.length) add(cells, match.index);
+  }
+  for (const match of markdown.matchAll(/^.*\b510(?:[\s.-]*[A-Z0-9]).*$/gim)) {
+    const line = match[0];
+    const cells = line.includes("|")
+      ? line.split("|").filter((cell) => cell.trim() && !/^\s*:?-+:?\s*$/.test(cell))
+      : line.split(/\t+|\s{2,}/).filter(Boolean);
+    add(cells.length > 1 ? cells : [line], match.index);
+  }
+
+  const unique = new Map<string, RecoveredMarkdownPart>();
+  for (const candidate of candidates) {
+    const key = candidate.partNumber.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+    const current = unique.get(key);
+    const score = (value: RecoveredMarkdownPart) => Number(value.quantity !== null) + Number(Boolean(value.unitOfMeasure)) + Number(Boolean(value.description));
+    if (!current || score(candidate) > score(current)) unique.set(key, candidate);
+  }
+  return Array.from(unique.values());
+}
+
 function averageConfidence(observation: ContentUnderstandingObservation) {
   const values = Object.values(observation.fields)
     .map((field) => field.confidence)
@@ -229,6 +308,36 @@ export function designPacketFromObservation(
     const key = otherPartNumber.toUpperCase().replace(/\s+/g, "");
     const current = assembliesByNumber.get(key);
     if (!current || candidate.parts.length > current.parts.length) assembliesByNumber.set(key, candidate);
+  }
+
+  const existingPartNumbers = new Set(Array.from(assembliesByNumber.values())
+    .flatMap((assembly) => assembly.parts)
+    .map((part) => part.partNumber.replace(/[^A-Z0-9]/gi, "").toUpperCase()));
+  for (const recovered of recover510PartsFromMarkdown(observation.markdown)) {
+    const normalizedPartNumber = recovered.partNumber.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+    if (existingPartNumbers.has(normalizedPartNumber)) continue;
+    let target = Array.from(assembliesByNumber.values()).find((assembly) =>
+      assembly.otherPartNumber.toUpperCase() === recovered.otherPartNumber.toUpperCase()
+      || assembly.title.toLowerCase() === recovered.title.toLowerCase());
+    if (!target) {
+      target = {
+        originallyFor: "",
+        title: recovered.title,
+        otherPartNumber: recovered.otherPartNumber,
+        reportedTotalItems: null,
+        parts: [],
+      };
+      let key = recovered.otherPartNumber.toUpperCase().replace(/\s+/g, "");
+      while (assembliesByNumber.has(key)) key = `${key}-RECOVERED`;
+      assembliesByNumber.set(key, target);
+    }
+    target.parts.push({
+      partNumber: recovered.partNumber,
+      quantity: recovered.quantity,
+      unitOfMeasure: recovered.unitOfMeasure,
+      description: recovered.description,
+    });
+    existingPartNumbers.add(normalizedPartNumber);
   }
 
   return {
