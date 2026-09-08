@@ -1,7 +1,8 @@
-﻿import { sites } from "@openai/sites-vite-plugin";
+import { sites } from "@openai/sites-vite-plugin";
 import vinext from "vinext";
 import { defineConfig, loadEnv } from "vite";
 import hostingConfig from "./.openai/hosting.json";
+import { yfinancePlugin } from "./scripts/yfinance-plugin";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
@@ -70,6 +71,7 @@ export default defineConfig(async ({ command, mode }) => {
       ...(isCodexSeatbeltSandbox ? { watch: { useFsEvents: false, usePolling: true } } : {}),
     },
     plugins: [
+      yfinancePlugin(localVars.WINDING_SITE_ACCESS_PASSWORD || "", process.env.YFINANCE_PYTHON || fileEnv.YFINANCE_PYTHON),
       vinext(),
       sites(),
       cloudflare({
@@ -79,3 +81,4 @@ export default defineConfig(async ({ command, mode }) => {
     ],
   };
 });
+

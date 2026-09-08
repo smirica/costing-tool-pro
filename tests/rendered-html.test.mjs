@@ -172,31 +172,27 @@ test("hands every normalized 510 part to the priced workspace with clean title-f
   assert.match(workspace, /Vendor item master match/);
   assert.match(workspace, /Would you like to use this closest match/);
   assert.match(workspace, /Tempel and vendor calculations/);
-  assert.match(workspace, /Current Tempel calculated price/);
-  assert.match(workspace, /Vendor Master cost/);
+  assert.match(workspace, /Historical Tempel item cost/);
+  assert.match(workspace, /Historical Dongan item cost/);
   assert.match(workspace, /Difference \(Tempel - vendor\)/);
   assert.match(workspace, /Vendor last-cost date/);
   assert.match(workspace, /Vendor Item Master: LAST DTE/);
-  assert.match(workspace, /Source code; definition not provided/);
-  assert.match(workspace, /PO price formula/);
+  assert.doesNotMatch(workspace, /PO price formula|Snapshot date|Surcharge code|market-index-bars|Price-source order|This explains the historical item cost|Rate calculation/);
   assert.match(packetReader, /recover510PartsFromMarkdown\(observation\.markdown\)/);
 });
 
-test("uses the live BLS steel index with a FRED fallback for market-adjusted vendor comparisons", async () => {
-  const [route, workspace] = await Promise.all([
-    readFile(new URL("app/api/steel-market/route.ts", root), "utf8"),
+test("uses current yfinance HRC pricing for the winding-sheet estimate", async () => {
+  const [workspace, model, quote] = await Promise.all([
     readFile(new URL("app/cost-analysis/steel-cost-workspace.tsx", root), "utf8"),
+    readFile(new URL("app/cost-analysis/current-cost.ts", root), "utf8"),
+    readFile(new URL("scripts/metal-quotes.py", root), "utf8"),
   ]);
-  assert.match(route, /SERIES_ID = "WPU1017"/);
-  assert.match(route, /api\.bls\.gov\/publicAPI\/v2\/timeseries\/data/);
-  assert.match(route, /api\.stlouisfed\.org\/fred\/series\/observations/);
-  assert.match(route, /BLS_API_KEY/);
-  assert.match(route, /FRED_API_KEY/);
-  assert.match(route, /hasSiteAccess\(request\)/);
-  assert.match(route, /Cross-origin market lookup is not allowed/);
-  assert.match(workspace, /latest index.*index in the vendor last-cost month/i);
-  assert.match(workspace, /Adjusted vendor estimate/);
-  assert.match(workspace, /marketAdjustedVendorCost/);
+  assert.match(workspace, /Estimated steel cost today/);
+  assert.match(workspace, /Yahoo Finance via yfinance · HRC=F/);
+  assert.match(model, /windingWeight/);
+  assert.match(model, /quotePrice \/ 100/);
+  assert.match(quote, /historical_prices/);
+  assert.doesNotMatch(workspace, /api\/steel-market|market-index-bars|Steel calculation basis/);
 });
 
 test("loads the Tempel and vendor 510 snapshots behind the site access check", async () => {

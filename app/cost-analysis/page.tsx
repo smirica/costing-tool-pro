@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { COST_ANALYSIS_STORAGE_KEY, type SteelCostInputs } from "../cost-analysis-data";
 import { SteelCostWorkspace } from "./steel-cost-workspace";
+import { MetalQuotes } from "./metal-quotes";
 
 
 export default function CostAnalysisPage() {
@@ -48,7 +49,7 @@ export default function CostAnalysisPage() {
       </nav>
 
       {!inputs ? (
-        <section className="cost-empty">
+        <><MetalQuotes /><section className="cost-empty">
           <span className="eyebrow">STEEL COST ANALYSIS</span>
           <h1>Analyze a document first.</h1>
           <p>This workspace receives 510-series parts from a design packet and steel weight from its linked winding sheet.</p>
@@ -58,7 +59,7 @@ export default function CostAnalysisPage() {
             <small>Calculations appear after this localhost session returns one or more 510-series design-packet parts.</small>
           </div>
           <a className="cost-primary-link" href="/">Open document reader</a>
-        </section>
+        </section></>
       ) : (
         <SteelCostWorkspace inputs={inputs} />
       )}
@@ -66,3 +67,4 @@ export default function CostAnalysisPage() {
     </main>
   );
 }
+

@@ -713,12 +713,6 @@ html[data-theme="light"] .price-status.none { color: #a12d42; }
 .market-kpis span { color: var(--muted); font-size: 13px; }
 .market-kpis strong { margin: 8px 0 5px; font-size: 22px; }
 .market-kpis small { color: #819aaa; font-size: 12px; }
-.market-index-bars { display: grid; gap: 12px; padding: 18px 20px; border-top: 1px solid var(--line); }
-.market-index-bars > div { display: grid; grid-template-columns: 130px 1fr; align-items: center; gap: 16px; }
-.market-index-bars span { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
-.market-index-bars span em { color: var(--muted); font-style: normal; }
-.market-index-bars i { height: 12px; overflow: hidden; border-radius: 999px; background: rgba(119,157,181,.15); }
-.market-index-bars u { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--blue), var(--cyan)); text-decoration: none; }
 .market-method { margin: 0; padding: 0 20px 18px; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .market-warning { margin: -8px 20px 18px; color: var(--copper); font-size: 13px; line-height: 1.5; }
 .market-benchmark-card > footer { width: 100%; margin: 0; display: flex; justify-content: space-between; gap: 16px; padding: 13px 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
@@ -756,9 +750,36 @@ html[data-theme="light"] .market-benchmark-card { background: rgba(255,255,255,.
   .market-kpis { grid-template-columns: 1fr; }
   .market-kpis > div, .market-kpis > div:nth-child(2n), .market-kpis > div:nth-last-child(-n+2) { border-right: 0; border-bottom: 1px solid var(--line); }
   .market-kpis > div:last-child { border-bottom: 0; }
-  .market-index-bars > div { grid-template-columns: 1fr; gap: 7px; }
   .market-benchmark-card > header, .market-benchmark-card > footer { align-items: flex-start; flex-direction: column; }
   .price-result-summary div, .price-result-summary div:first-child, .price-result-summary div:last-child { padding: 9px 0; border-right: 0; border-bottom: 1px solid rgba(157,210,235,.12); }
   .price-result-summary div:last-child { border-bottom: 0; }
   .cost-section-heading { align-items: flex-start; flex-direction: column; }
 }
+
+/* Compact current-price strip beneath the cost summary. */
+.commodity-strip { display: flex; align-items: center; gap: 18px; margin: 16px 0 22px; padding: 12px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.commodity-strip-title { flex: 0 0 150px; }
+.commodity-strip-title strong, .commodity-strip-title small { display: block; }
+.commodity-strip small { font-size: 12px; line-height: 1.4; color: var(--muted); }
+.commodity-strip-quotes { flex: 1; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; }
+.commodity-strip-quotes > div { display: grid; gap: 3px; }
+.commodity-strip-quotes span { font-size: 13px; }
+.commodity-strip-quotes span b { font-weight: 500; color: var(--muted); }
+.commodity-strip-quotes strong { font-size: 17px; }
+.commodity-strip-action { display: grid; gap: 5px; }
+.commodity-strip button { font: inherit; font-size: 14px; color: inherit; border: 1px solid var(--line); border-radius: 8px; background: transparent; padding: 8px 12px; cursor: pointer; }
+.commodity-strip button:disabled { opacity: .6; cursor: wait; }
+.pricing-source-heading { display: flex; gap: 12px; justify-content: space-between; align-items: baseline; margin-bottom: 16px; }
+.pricing-source-heading h4 { margin: 0; }
+.pricing-source-heading a { font-size: 14px; text-decoration: underline; color: inherit; }
+.cost-page .calculation-line small, .cost-page .calculation-line .formula-explanation { font-size: 15px; line-height: 1.65; color: var(--ink); }
+.formula-explanation { margin: 8px 0 0; }
+.estimate-method { margin: 16px 20px; font-size: 15px; line-height: 1.65; }
+.today-cost-equation { padding: 20px; border-top: 1px solid var(--line); }
+.today-cost-equation span, .today-cost-equation strong { display: block; margin-bottom: 10px; }
+.today-cost-equation strong { font-size: 21px; line-height: 1.5; }
+.today-cost-equation p { font-size: 15px; line-height: 1.65; }
+@media (max-width: 760px) { .commodity-strip { flex-wrap: wrap; }.commodity-strip-title { flex-basis: 100%; }.commodity-strip-quotes { min-width: 70%; } }
+@media (max-width: 600px) { .commodity-strip-quotes { grid-template-columns: 1fr; }.pricing-source-heading { flex-direction: column; }.today-cost-equation strong { font-size: 18px; } }
+
+

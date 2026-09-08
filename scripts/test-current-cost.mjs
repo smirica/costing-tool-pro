@@ -1,0 +1,26 @@
+import assert from "node:assert/strict";
+import ts from "typescript";
+import {readFile,writeFile} from "node:fs/promises";
+const source=await readFile("app/cost-analysis/current-cost.ts","utf8");
+await writeFile("work/current-cost-test.mjs",ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText);
+const {currentCost,catalogWeight,historicalBasis}=await import("../work/current-cost-test.mjs");
+const part={partNumber:"510-EI1.7524M50",quantity:100,unitOfMeasure:"EACH"};
+const bundle={tempel:{netWeightPerThousand:125.5262,poPricePerLb:1.3174,effectiveDate:"2024-11-01"},vendor:{lastCost:0.16,stockUnit:"Each",lastDate:"2026-05-12"}};
+const market={quotes:[{id:"steel",status:"available",pricePerLb:0.6285}],steelHistory:[{requestedDate:"2026-05-12",status:"available",priceDate:"2026-05-12",pricePerLb:0.541}]};
+const result=currentCost([part],[bundle],13.45,market);
+assert.ok(Math.abs(catalogWeight(part,bundle)-12.55262)<1e-10);
+assert.equal(result.rows[0].weight,13.45);
+assert.equal(historicalBasis(bundle).date,"2026-05-12");
+assert.ok(Math.abs(result.total-13.45*(0.16/0.1255262)*(0.6285/0.541))<1e-10);
+assert.equal(currentCost([part],[bundle],13.45,null).total,null);
+assert.equal(currentCost([part],[null],13.45,market).total,null);
+assert.equal(currentCost([part],[bundle],0,market).total,null);
+const multiple=currentCost([part,{...part,quantity:200}],[bundle,bundle],30,market);
+assert.ok(Math.abs(multiple.rows[0].weight-10)<1e-10);
+assert.ok(Math.abs(multiple.rows[1].weight-20)<1e-10);
+assert.equal(currentCost([part,{...part,unitOfMeasure:"CORE"}],[bundle,bundle],30,market).total,null);
+assert.equal(currentCost([part,part],[bundle,null],30,market).total,null);
+assert.equal(catalogWeight({...part,unitOfMeasure:"CORE"},bundle),null);
+assert.equal(historicalBasis({...bundle,vendor:{...bundle.vendor,lastDate:"2099-01-01"}}).date,"2024-11-01");
+console.log("Current-cost tests passed. Example estimated total:",result.total.toFixed(2));
+

@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { MetalQuotes } from "./metal-quotes";
+import { currentCost, historicalBasis, vendorUnitRate, type Quotes } from "./current-cost";
 import type {
   SteelCostInputs,
   SteelCostPart,
-  SteelMarketComparison,
-  SteelMarketResponse,
   SteelPriceBundle,
   SteelPricingResponse,
   TempelPrice,
@@ -39,36 +39,25 @@ function date(value: string) {
   return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-function month(value: string) {
-  if (!value) return "No month";
-  return new Date(`${value.slice(0, 7)}-01T00:00:00`).toLocaleDateString(undefined, { year: "numeric", month: "short" });
-}
-
 function cleanDisplayDescription(value: string) {
   const normalized = value.replace(/\s+/g, " ").trim();
   const coreIndex = normalized.search(/\bcore\b/i);
   return coreIndex > 0 ? normalized.slice(coreIndex) : normalized;
 }
 
-function marketComparisonForDate(market: SteelMarketResponse | null, value: string) {
-  return market?.comparisons.find((comparison) => comparison.requestedDate === value) || null;
-}
-
-function marketBarWidth(value: number, comparison: SteelMarketComparison) {
-  return `${Math.max(8, value / Math.max(comparison.purchaseIndex, comparison.latestIndex) * 100)}%`;
-}
-
 function tempelEstimate(part: SteelCostPart, price: TempelPrice | null) {
-  if (!price || part.quantity == null || price.poPricePerLb == null) return null;
-  const unit = part.unitOfMeasure.toUpperCase();
-  const weight = /^(LB|LBS|POUND|POUNDS)$/.test(unit)
-    ? part.quantity
-    : price.netWeightPerThousand == null ? null : part.quantity * price.netWeightPerThousand / 1000;
+  if (!price || !part.quantity || price.poPricePerLb == null) return null;
+  const u = part.unitOfMeasure.trim().toUpperCase();
+  const weight = /^(LB|LBS|POUND|POUNDS)$/.test(u) ? part.quantity
+    : /^(EA|EACH|PCS|PC|PIECE|PIECES)$/.test(u) && price.netWeightPerThousand != null
+      ? part.quantity * price.netWeightPerThousand / 1000 : null;
   return weight == null ? null : { weight, cost: weight * price.poPricePerLb };
 }
 
 function vendorEstimate(part: SteelCostPart, price: VendorPrice | null) {
   if (!price || part.quantity == null || price.lastCost == null || price.lastCost <= 0) return null;
+  const normal = (u: string) => u.trim().toUpperCase().replace(/^EA$/, "EACH").replace(/^LBS$/, "LB");
+  if (normal(part.unitOfMeasure) !== normal(price.stockUnit)) return null;
   return { cost: part.quantity * price.lastCost };
 }
 
@@ -81,13 +70,11 @@ function chosenBundle(bundle: SteelPriceBundle | undefined, decision: string | u
 export function SteelCostWorkspace({ inputs }: { inputs: SteelCostInputs }) {
   const [pricing, setPricing] = useState<SteelPricingResponse | null>(null);
   const [pricingError, setPricingError] = useState("");
-  const [market, setMarket] = useState<SteelMarketResponse | null>(null);
-  const [marketError, setMarketError] = useState("");
+  const [market, setMarket] = useState<Quotes | null>(null);
   const [decisions, setDecisions] = useState<Record<number, "accepted" | "rejected">>({});
 
   useEffect(() => {
     const controller = new AbortController();
-    setPricingError("");
     fetch("/api/steel-pricing", {
       method: "POST",
       headers: { "Content-Type": "application/json", accept: "application/json" },
@@ -97,6 +84,8 @@ export function SteelCostWorkspace({ inputs }: { inputs: SteelCostInputs }) {
       .then(async (response) => {
         const value = await response.json().catch(() => null);
         if (!response.ok) throw new Error(value?.error || "Pricing data could not be loaded.");
+        if (controller.signal.aborted) return;
+        setPricingError("");
         setPricing(value as SteelPricingResponse);
       })
       .catch((error) => {
@@ -105,46 +94,15 @@ export function SteelCostWorkspace({ inputs }: { inputs: SteelCostInputs }) {
     return () => controller.abort();
   }, [inputs.parts]);
 
-  useEffect(() => {
-    const purchaseDates = Array.from(new Set(pricing?.matches
-      .map((match) => match.vendor?.lastDate || "")
-      .filter(Boolean) || []));
-    if (!purchaseDates.length) {
-      setMarket(null);
-      setMarketError("");
-      return;
-    }
-    const controller = new AbortController();
-    setMarketError("");
-    fetch("/api/steel-market", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ purchaseDates }),
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const value = await response.json().catch(() => null);
-        if (!response.ok) throw new Error(value?.error || "The steel market benchmark could not be loaded.");
-        setMarket(value as SteelMarketResponse);
-      })
-      .catch((error) => {
-        if (!controller.signal.aborted) setMarketError(error instanceof Error ? error.message : "The steel market benchmark could not be loaded.");
-      });
-    return () => controller.abort();
-  }, [pricing]);
-
-  const calculations = useMemo(() => inputs.parts.map((part, index) => {
-    const bundle = chosenBundle(pricing?.matches[index], decisions[index]);
+  const bundles = useMemo(() => inputs.parts.map((_, index) => chosenBundle(pricing?.matches[index], decisions[index])), [inputs.parts, pricing, decisions]);
+  const marketDates = useMemo(() => Array.from(new Set(bundles.map(bundle => historicalBasis(bundle)?.date).filter((d): d is string => Boolean(d)))).sort().join(","), [bundles]);
+  const today = currentCost(inputs.parts, bundles, inputs.steelWeightLbs, market);
+  const calculations = inputs.parts.map((part, index) => {
+    const bundle = bundles[index];
     const tempel = tempelEstimate(part, bundle?.tempel || null);
     const vendor = vendorEstimate(part, bundle?.vendor || null);
-    const difference = tempel && vendor ? tempel.cost - vendor.cost : null;
-    const marketComparison = marketComparisonForDate(market, bundle?.vendor?.lastDate || "");
-    const marketAdjustedVendorCost = vendor && marketComparison ? vendor.cost * marketComparison.multiplier : null;
-    return { part, bundle, tempel, vendor, difference, marketComparison, marketAdjustedVendorCost, selectedCost: tempel?.cost ?? vendor?.cost ?? null };
-  }), [decisions, inputs.parts, market, pricing]);
-
-  const estimatedTotal = calculations.reduce((sum, item) => sum + (item.selectedCost || 0), 0);
-  const pricedRows = calculations.filter((item) => item.selectedCost != null).length;
+    return { part, bundle, tempel, vendor, difference: tempel && vendor ? tempel.cost - vendor.cost : null };
+  });
   const sourceStatus = pricing
     ? `Tempel ${pricing.sourceSummary.tempelRows} rows · Vendor ${pricing.sourceSummary.vendorRows.toLocaleString()} rows`
     : pricingError ? "Pricing lookup unavailable" : "Loading pricing snapshots…";
@@ -158,20 +116,15 @@ export function SteelCostWorkspace({ inputs }: { inputs: SteelCostInputs }) {
 
       <section className="cost-metrics" aria-label="Steel cost input summary">
         <article><span>510-series rows</span><strong>{inputs.parts.length}</strong><small>Part numbers returned from the design packet</small></article>
-        <article><span>Winding-sheet steel</span><strong>{pounds(inputs.steelWeightLbs)}</strong><small>Physical steel weight kept separate from item pricing</small></article>
+        <article><span>Winding-sheet steel</span><strong>{pounds(inputs.steelWeightLbs)}</strong><small>Weight used for today’s steel estimate</small></article>
         <article><span>Steel grade</span><strong>{inputs.steelGrade || "—"}</strong><small>Used to review the matching price family</small></article>
-        <article className="pending-total"><span>Estimated steel cost</span><strong>{pricedRows ? money(estimatedTotal) : "—"}</strong><small>{pricedRows ? `${pricedRows} priced row${pricedRows === 1 ? "" : "s"} · Tempel first, vendor fallback` : "Waiting for a usable exact or approved closest match"}</small></article>
+        <article className="pending-total"><span>Estimated steel cost today</span><strong>{money(today.total)}</strong><small>{today.total != null ? "Winding-sheet weight × market-adjusted supplier rate" : today.reason}</small></article>
       </section>
 
+      <MetalQuotes dates={marketDates} onData={setMarket} hidden />
       <section className="cost-workspace">
         {pricingError && <p className="pricing-error" role="alert">{pricingError}</p>}
-        <div className="cost-section-heading"><div><span>01</span><h2>Steel calculation basis</h2></div><small>Part pricing and winding weight remain separate</small></div>
-        <div className="steel-basis-card">
-          <div><span>Winding-sheet reference</span><strong>{pounds(inputs.steelWeightLbs)}</strong><small>{inputs.steelGrade || "Grade not returned"}</small></div>
-          <p>The 510 item identifies the pricing record. Tempel estimates use the design-packet quantity and the schedule&apos;s net weight per 1,000. Winding-sheet steel weight remains a cross-check and is not substituted into the item calculation.</p>
-        </div>
-
-        <div className="cost-section-heading"><div><span>02</span><h2>Design-packet 510 parts</h2></div><small>{inputs.parts.length} row{inputs.parts.length === 1 ? "" : "s"} returned</small></div>
+        <div className="cost-section-heading"><div><span>01</span><h2>Design-packet 510 parts</h2></div><small>{inputs.parts.length} row{inputs.parts.length === 1 ? "" : "s"} returned</small></div>
         <div className="table-wrap cost-table-wrap">
           <table className="cost-parts-table">
             <thead><tr><th>Part number</th><th>Quantity</th><th>Design packet unit</th><th>Description</th><th>Price status</th></tr></thead>
@@ -207,54 +160,46 @@ export function SteelCostWorkspace({ inputs }: { inputs: SteelCostInputs }) {
           </table>
         </div>
 
-        <div className="cost-section-heading"><div><span>03</span><h2>Tempel and vendor calculations</h2></div><small>Latest source dates and formulas shown</small></div>
+        <div className="cost-section-heading"><div><span>02</span><h2>Tempel and vendor calculations</h2></div><small>Historical supplier prices and item quantities</small></div>
         <div className="price-comparison-list">
           {calculations.some((item) => item.bundle) ? calculations.map((item, index) => item.bundle && (
             <article className="price-comparison-card" key={`calculation-${item.part.partNumber}-${index}`}>
               <header><div><span>{item.bundle.matchKind === "closest" ? "APPROVED CLOSEST MATCH" : "EXACT PART MATCH"}</span><h3>{item.part.partNumber}</h3></div>{item.bundle.matchKind === "closest" && <small>Using {item.bundle.matchedPartNumber}</small>}</header>
               <dl className="price-result-summary" aria-label="Tempel and vendor price summary">
-                <div><dt>Current Tempel calculated price</dt><dd>{money(item.tempel?.cost)}</dd></div>
-                <div><dt>Vendor Master cost</dt><dd>{money(item.vendor?.cost)}</dd></div>
+                <div><dt>Historical Tempel item cost</dt><dd>{money(item.tempel?.cost)}</dd></div>
+                <div><dt>Historical Dongan item cost</dt><dd>{money(item.vendor?.cost)}</dd></div>
                 <div><dt>Difference (Tempel - vendor)</dt><dd className={item.difference != null && item.difference > 0 ? "is-higher" : ""}>{signedMoney(item.difference)}</dd></div>
                 <div><dt>Vendor last-cost date</dt><dd>{item.bundle.vendor ? date(item.bundle.vendor.lastDate) : "—"}</dd></div>
               </dl>
               <div className="price-comparison-grid">
                 <section>
-                  <h4>Tempel active schedule</h4>
+                  <div className="pricing-source-heading"><h4>Tempel pricing data</h4><a href="/api/pricing-source?source=tempel" target="_blank" rel="noreferrer">View source data ↗</a></div>
                   {item.bundle.tempel ? <>
                     <dl>
                       <div><dt>Tempel part number</dt><dd>{item.bundle.tempel.tempelPartNumber || "—"}</dd></div>
                       <div><dt>Effective date</dt><dd>{date(item.bundle.tempel.effectiveDate)}</dd></div>
-                      <div><dt>Snapshot date</dt><dd>{date(item.bundle.tempel.snapshotDate)}</dd></div>
                       <div><dt>Base price / lb</dt><dd>{money(item.bundle.tempel.basePricePerLb, 4)}</dd></div>
                       <div><dt>Surcharge / lb</dt><dd>{money(item.bundle.tempel.surchargePerLb, 4)}</dd></div>
-                      <div><dt>Surcharge code</dt><dd>{item.bundle.tempel.surchargeCode || "—"}<small>Source code; definition not provided</small></dd></div>
                       <div><dt>PO price / lb</dt><dd>{money(item.bundle.tempel.poPricePerLb, 4)}</dd></div>
                     </dl>
-                    <div className="source-formula-note">
-                      <span>PO price formula</span>
-                      <strong>{money(item.bundle.tempel.basePricePerLb, 4)} base + {money(item.bundle.tempel.surchargePerLb, 4)} surcharge = {money(item.bundle.tempel.poPricePerLb, 4)} / lb</strong>
-                      <small>Values imported from Tempel columns “wef 01NOV2024,” “SC/lb,” and “PO Price/lb.”</small>
-                    </div>
                     <div className="calculation-line">
-                      <span>Weight</span><strong>{item.tempel ? pounds(item.tempel.weight) : "Not calculated"}</strong>
-                      <small>{item.part.quantity ?? "—"} {item.part.unitOfMeasure || "units"} × {number(item.bundle.tempel.netWeightPerThousand)} net lb / 1,000</small>
+                      <span>Catalog weight for design-packet quantity</span><strong>{item.tempel ? pounds(item.tempel.weight) : "Not calculated"}</strong>
+                      <p className="formula-explanation">{/^(LB|LBS|POUND|POUNDS)$/i.test(item.part.unitOfMeasure) ? "The design-packet quantity is already in pounds." : <>{number(item.bundle.tempel.netWeightPerThousand)} lb per 1,000 pieces ÷ 1,000 = {number((item.bundle.tempel.netWeightPerThousand ?? 0) / 1000, 6)} lb per piece.<br />{item.part.quantity ?? "—"} pieces × {number((item.bundle.tempel.netWeightPerThousand ?? 0) / 1000, 6)} lb per piece = {item.tempel ? pounds(item.tempel.weight) : "unavailable"}.</>}</p>
                     </div>
-                    <div className="calculation-line total"><span>Tempel estimate</span><strong>{money(item.tempel?.cost)}</strong><small>{item.tempel ? `${number(item.tempel.weight, 2)} lb × ${money(item.bundle.tempel.poPricePerLb, 4)} / lb` : "Quantity, unit, weight, or PO price is missing"}</small></div>
+                    <div className="calculation-line total"><span>Historical Tempel item cost</span><strong>{money(item.tempel?.cost)}</strong><small>{item.tempel ? `${number(item.tempel.weight, 2)} lb × ${money(item.bundle.tempel.poPricePerLb, 4)} / lb` : "Quantity, unit, weight, or PO price is missing"}</small></div>
                   </> : <p className="source-empty">No Tempel part-number match.</p>}
                 </section>
                 <section>
-                  <h4>Vendor item master</h4>
+                  <div className="pricing-source-heading"><h4>Dongan vendor pricing data</h4><a href="/api/pricing-source?source=vendor" target="_blank" rel="noreferrer">View source data ↗</a></div>
                   {item.bundle.vendor ? <>
                     <dl>
                       <div><dt>Vendor</dt><dd>{item.bundle.vendor.vendorNumber || "—"}</dd></div>
                       <div><dt>Vendor stock number</dt><dd>{item.bundle.vendor.stockNumber || "—"}</dd></div>
                       <div><dt>Last cost date</dt><dd>{date(item.bundle.vendor.lastDate)}<small>Vendor Item Master: LAST DTE</small></dd></div>
-                      <div><dt>Snapshot date</dt><dd>{date(item.bundle.vendor.snapshotDate)}</dd></div>
                       <div><dt>Last cost</dt><dd>{money(item.bundle.vendor.lastCost, 4)} / {item.bundle.vendor.stockUnit || "stock unit"}</dd></div>
                       <div><dt>Quoted price</dt><dd>{money(item.bundle.vendor.quotePrice, 2)} / {item.bundle.vendor.quoteUnit || "quote unit"}</dd></div>
                     </dl>
-                    <div className="calculation-line total"><span>Vendor estimate</span><strong>{money(item.vendor?.cost)}</strong><small>{item.vendor ? `${item.part.quantity} × ${money(item.bundle.vendor.lastCost, 4)} latest positive cost` : "No positive last cost available for a direct estimate"}</small></div>
+                    <div className="calculation-line total"><span>Historical Dongan item cost</span><strong>{money(item.vendor?.cost)}</strong><small>{item.vendor ? `${item.part.quantity} × ${money(item.bundle.vendor.lastCost, 4)} per ${item.bundle.vendor.stockUnit}` : "A positive last cost and matching stock unit are required"}</small></div>
                     {item.bundle.vendorAlternatives.length > 1 && <small className="alternatives-note">{item.bundle.vendorAlternatives.length - 1} additional vendor record{item.bundle.vendorAlternatives.length === 2 ? "" : "s"} retained for review.</small>}
                   </> : <p className="source-empty">No vendor item master match.</p>}
                 </section>
@@ -263,41 +208,30 @@ export function SteelCostWorkspace({ inputs }: { inputs: SteelCostInputs }) {
           )) : <p className="source-empty comparison-empty">{pricing ? "No exact match or approved closest match is available for calculation." : "Pricing calculations will appear after the source lookup finishes."}</p>}
         </div>
 
-        <div className="cost-section-heading"><div><span>04</span><h2>Steel market benchmark</h2></div><small>BLS steel mill products index · monthly</small></div>
+        <div className="cost-section-heading"><div><span>03</span><h2>How today’s estimate is calculated</h2></div><small>Yahoo Finance via yfinance · HRC=F</small></div>
+        {inputs.parts.length > 1 && <p className="estimate-method">Winding-sheet weight is allocated across parts in proportion to their catalog weights. All parts need usable weights and rates before a total is shown.</p>}
         <div className="market-benchmark-list">
-          {calculations.some((item) => item.vendor) ? calculations.map((item, index) => item.vendor && (
-            <article className="market-benchmark-card" key={`market-${item.part.partNumber}-${index}`}>
-              <header>
-                <div><span>MARKET-ADJUSTED REFERENCE</span><h3>{item.part.partNumber}</h3></div>
-                {market && <small>Latest complete month: {month(market.latestPeriod)}</small>}
-              </header>
-              {item.marketComparison ? <>
-                <div className="market-kpis">
-                  <div><span>Index at vendor date</span><strong>{number(item.marketComparison.purchaseIndex, 1)}</strong><small>{month(item.marketComparison.purchasePeriod)}</small></div>
-                  <div><span>Latest index</span><strong>{number(item.marketComparison.latestIndex, 1)}</strong><small>{month(item.marketComparison.latestPeriod)}</small></div>
-                  <div><span>Market multiplier</span><strong>{number(item.marketComparison.multiplier, 3)}×</strong><small>{item.marketComparison.changePercent >= 0 ? "+" : ""}{number(item.marketComparison.changePercent, 1)}%</small></div>
-                  <div><span>Adjusted vendor estimate</span><strong>{money(item.marketAdjustedVendorCost)}</strong><small>{money(item.vendor.cost)} × {number(item.marketComparison.multiplier, 3)}</small></div>
-                </div>
-                <div className="market-index-bars" aria-label={`Steel index comparison for ${item.part.partNumber}`}>
-                  <div><span><b>{month(item.marketComparison.purchasePeriod)}</b><em>{number(item.marketComparison.purchaseIndex, 1)}</em></span><i><u style={{ width: marketBarWidth(item.marketComparison.purchaseIndex, item.marketComparison) }} /></i></div>
-                  <div><span><b>{month(item.marketComparison.latestPeriod)}</b><em>{number(item.marketComparison.latestIndex, 1)}</em></span><i><u style={{ width: marketBarWidth(item.marketComparison.latestIndex, item.marketComparison) }} /></i></div>
-                </div>
-                <p className="market-method">The index is a broad market benchmark, not a quoted electrical-steel price. Multiplier = latest index ÷ index in the vendor last-cost month. The adjusted estimate remains separate from the selected Tempel/vendor cost.</p>
-                {market?.warning && <p className="market-warning">{market.warning}</p>}
-              </> : <p className="source-empty">{marketError || (market ? "No monthly index was available for this vendor date." : "Loading the steel market benchmark…")}</p>}
-              {market && <footer><span>{market.sourceLabel} · {market.seriesId} · {market.units} · {market.seasonalAdjustment}</span><a href={market.sourceUrl} target="_blank" rel="noreferrer">View source</a></footer>}
-            </article>
-          )) : <p className="source-empty comparison-empty">A market adjustment appears when a dated positive Vendor Master cost is available.</p>}
+          {today.rows.map((row,index) => <article className="market-benchmark-card" key={index}>
+            <header><div><span>CURRENT-COST ESTIMATE</span><h3>{row.part.partNumber}</h3></div><small>{row.basis?.source ?? "Supplier rate unavailable"}</small></header>
+            {row.basis && <p className="estimate-method">Historical supplier rate: <strong>{money(row.basis.rate,4)} / lb</strong>, dated {date(row.basis.date)}.
+              {bundles[index]?.vendor && row.basis.source.startsWith("Dongan") && vendorUnitRate(bundles[index]) != null && /^(EA|EACH)$/i.test(bundles[index]!.vendor!.stockUnit) && <> {money(bundles[index]!.vendor!.lastCost,4)} per piece ÷ {number((bundles[index]!.tempel?.netWeightPerThousand ?? 0)/1000,6)} lb per piece.</>}
+            </p>}
+            <div className="market-kpis">
+              <div><span>Market price of steel at supplier date</span><strong>{money(row.history?.pricePerLb,4)} / lb</strong><small>{row.history?.priceDate ? date(row.history.priceDate) + " daily close" : "Historical quote unavailable"}</small></div>
+              <div><span>Latest market price of steel</span><strong>{money(today.steel?.pricePerLb,4)} / lb</strong><small>{today.steel?.quotedAt ? new Date(today.steel.quotedAt).toLocaleString() : "Waiting for quote"}</small></div>
+              <div><span>Market adjustment</span><strong>{row.multiplier != null ? number(row.multiplier,4)+"×" : "—"}</strong><small>Latest price ÷ historical price</small></div>
+              <div><span>Estimated rate today</span><strong>{money(row.rate,4)} / lb</strong><small>Supplier rate × market adjustment</small></div>
+            </div>
+            <div className="today-cost-equation">
+              <span>{inputs.parts.length === 1 ? "Winding-sheet steel weight" : "Allocated winding-sheet steel weight"}</span>
+              <strong>{row.cost != null ? pounds(row.weight!)+" × "+money(row.rate,4)+" / lb = "+money(row.cost) : today.reason}</strong>
+              {inputs.parts.length > 1 && row.weight != null && <p>Allocation: {pounds(inputs.steelWeightLbs)} × this part’s share of the combined catalog weight = {pounds(row.weight)}.</p>}
+            </div>
+            <footer><span>Latest available quote; may be delayed. Historical dates use the preceding trading close if needed (up to 7 days).</span><a href="https://finance.yahoo.com/quote/HRC%3DF/" target="_blank" rel="noreferrer">HRC=F on Yahoo Finance ↗</a></footer>
+          </article>)}
         </div>
-
-        <div className="cost-section-heading source-order-heading"><div><span>05</span><h2>Price-source order</h2></div><small>Every result keeps its source date and unit</small></div>
-        <ol className="price-waterfall">
-          <li><span>1</span><div><strong>Tempel active schedule</strong><small>Exact 510 match using base price plus surcharge and the schedule&apos;s net weight.</small></div></li>
-          <li><span>2</span><div><strong>Latest valid vendor cost</strong><small>Newest positive dated record for the exact item, with vendor and stock units shown.</small></div></li>
-          <li><span>3</span><div><strong>Closest part review</strong><small>A suggested part is never priced until the user answers yes.</small></div></li>
-          <li><span>4</span><div><strong>No-match review</strong><small>Missing price, weight, unit, or grade remains visible instead of becoming an assumed cost.</small></div></li>
-        </ol>
       </section>
     </>
   );
 }
+
